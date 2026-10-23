@@ -616,26 +616,20 @@ def strip_internal(cat):
 VALID_TTL = 3 * 24 * 3600      # Prüfergebnis gilt 3 Tage
 MAX_CHECKS = 4000              # pro Lauf (16 Threads, ~2 Min.); der Rest folgt in den nächsten Läufen
 SRF_URN = re.compile(r"urn:srf:video:[0-9a-f-]{36}")
-ARD_ID = re.compile(r"ardmediathek\.de/video/(?:[^/?#]+/)*?([A-Za-z0-9]{20,})(?:[/?#]|$)")
 
 def probe_url(o):
-    """Was wir anfragen, um zu wissen, ob die Sendung noch existiert – möglichst ohne Ländersperre:
-    SRF: Datenbank-Eintrag (per URN) oder die Untertitel-Datei (die Videodatei bleibt nach dem Löschen liegen).
-    ARD: Eintrag in der ARD-Datenbank. ZDF: die Sendungsseite. Alle anderen: die Videodatei selbst."""
-    web = o.get("_w") or ""
+    """Was wir anfragen, um zu wissen, ob die Sendung noch existiert.
+    SRF: Datenbank-Eintrag (per URN) oder die Untertitel-Datei – die Videodatei bleibt dort auch nach dem Löschen
+    liegen. Alle anderen: die Videodatei selbst. (ARD-Datenbank und ZDF-Sendungsseite wurden probiert und wieder
+    verworfen: die Web-Adressen der Filmliste sind oft veraltet und melden 404, obwohl die Sendung noch läuft.)"""
     if o["c"] == "SRF":
-        m = SRF_URN.search(web)
+        m = SRF_URN.search(o.get("_w") or "")
         if m: return f"https://il.srgssr.ch/integrationlayer/2.0/mediaComposition/byUrn/{m.group(0)}.json?onlyChapters=true"
         return o.get("ut") or o["u"]
-    if o["c"] == "ARD":
-        m = ARD_ID.search(web)
-        if m: return f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{m.group(1)}?embedded=false"
-    if o["c"].startswith("ZDF") and "zdf.de/" in web:
-        return web
     return o["u"]
 
 def http_status(url):
-    req = urllib.request.Request(url, headers=UA, method="GET" if "api.ardmediathek.de" in url else "HEAD")
+    req = urllib.request.Request(url, headers=UA, method="HEAD")
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
             return resp.status
@@ -645,10 +639,9 @@ def http_status(url):
         return 0                                           # Netzfehler: unbekannt
 
 def gone(o, status):
-    """404/410 = weg. 403 nur bei Sendungen ohne Ländersperre (gesperrte liefern vom Server aus immer 403)."""
-    if status in (404, 410): return True
-    if status == 403 and not o.get("g") and o["c"] not in ("SRF", "ARD") and not o["c"].startswith("ZDF"): return True
-    return False
+    """Nur 404/410 gelten als weg. 403 ist mehrdeutig (Ländersperre vom Build-Server aus, oder nur die HD-Datei
+    fehlt) – das klärt die App vom Gerät aus, notfalls mit der Ersatzadresse."""
+    return status in (404, 410)
 
 def load_valid_cache(prev_dir):
     path = prev_dir and os.path.join(prev_dir, "valid.json.gz")
