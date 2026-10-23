@@ -1,6 +1,9 @@
 package com.example.mediathektv
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -8,115 +11,208 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
-data class Video(
-    val id: String,
-    val channel: String,
-    val topic: String,            // dient als "Rubrik/Genre"
-    val title: String,
-    val description: String,
-    val duration: Int,
-    val timestamp: Long,          // Sendedatum
-    val url: String,
-    val subtitleUrl: String,      // "" wenn keine Untertitel
-    val website: String,
-    val language: String = "Deutsch",
-    val variants: List<Video> = emptyList()  // weitere Sprachfassungen
-) {
-    /** Produktionsjahr, falls im Titel/Text als 19xx/20xx erkennbar – sonst null. */
-    val productionYear: Int? get() =
-        Regex("\\b(19|20)\\d{2}\\b").findAll("$title $description")
-            .map { it.value.toInt() }.filter { it in 1900..2026 }.maxOrNull()
-    val hasSubtitles: Boolean get() = subtitleUrl.isNotBlank()
-}
-
-data class Series(val topic: String, val channel: String, val episodes: List<Video>)
-
+/**
+ * Zugriff auf die MediathekViewWeb-API (Index aller öffentlich-rechtlichen Mediatheken).
+ * Hinweis: Die Suche dort ist unscharf (Wortsuche). Darum wird hier grob gesucht
+ * und anschließend exakt nach Rubrik, Sender und Dauer gefiltert.
+ */
 object Api {
-    private val client = OkHttpClient()
     private const val ENDPOINT = "https://mediathekviewweb.de/api/query"
+    private val client = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(45, TimeUnit.SECONDS)
+        .build()
 
-    suspend fun query(
-        text: String = "", channels: List<String> = emptyList(), topicQuery: String = "",
-        size: Int = 50, minDuration: Int = 300, sortBy: String = "timestamp"
+    /** Nicht-deutschsprachige Fassungen und Kinderprogramm ausblenden. */
+    private val excludedChannels = setOf("ARTE.FR", "ARTE.EN", "ARTE.ES", "ARTE.IT", "ARTE.PL", "KiKA", "ZDF-tivi")
+
+    suspend fun search(
+        text: String = "",
+        topic: String = "",
+        channel: String = "",
+        size: Int = 100,
+        minSeconds: Int? = null,
+        maxSeconds: Int? = null,
     ): List<Video> = withContext(Dispatchers.IO) {
         val queries = JSONArray()
-        if (text.isNotBlank())
-            queries.put(JSONObject().put("fields", JSONArray(listOf("title", "topic"))).put("query", text))
-        if (topicQuery.isNotBlank())
-            queries.put(JSONObject().put("fields", JSONArray(listOf("topic"))).put("query", topicQuery))
-        channels.forEach { ch -> queries.put(JSONObject().put("fields", JSONArray(listOf("channel"))).put("query", ch)) }
-        val body = JSONObject().put("queries", queries)
-            .put("sortBy", sortBy).put("sortOrder", "desc")
+        fun add(fields: List<String>, value: String) =
+            queries.put(JSONObject().put("fields", JSONArray(fields)).put("query", value))
+        if (text.isNotBlank()) add(listOf("title", "topic"), text)
+        if (topic.isNotBlank()) add(listOf("topic"), topic)
+        if (channel.isNotBlank()) add(listOf("channel"), channel)
+
+        val body = JSONObject()
+            .put("queries", queries)
+            .put("sortBy", "timestamp").put("sortOrder", "desc")
             .put("future", false).put("offset", 0).put("size", size)
-            .put("duration_min", minDuration).toString()
-        val req = Request.Builder().url(ENDPOINT).post(body.toRequestBody("text/plain".toMediaType())).build()
-        client.newCall(req).execute().use { resp ->
-            val json = JSONObject(resp.body?.string() ?: return@withContext emptyList())
-            val results = json.optJSONObject("result")?.optJSONArray("results") ?: return@withContext emptyList()
-            (0 until results.length()).map { i ->
-                val o = results.getJSONObject(i)
-                val best = o.optString("url_video_hd").ifBlank { o.optString("url_video") }
-                Video(
-                    id = o.optString("id"), channel = o.optString("channel"),
-                    topic = o.optString("topic"), title = o.optString("title"),
-                    description = o.optString("description"), duration = o.optInt("duration"),
-                    timestamp = o.optLong("timestamp"), url = best,
-                    subtitleUrl = o.optString("url_subtitle"),
-                    website = o.optString("url_website"),
-                    language = detectLanguage(o.optString("title"))
+            .apply {
+                minSeconds?.let { put("duration_min", it) }
+                maxSeconds?.let { put("duration_max", it) }
+            }
+        val request = Request.Builder().url(ENDPOINT)
+            .post(body.toString().toRequestBody("text/plain".toMediaType()))
+            .build()
+
+        client.newCall(request).execute().use { resp ->
+            if (!resp.isSuccessful) error("Server antwortet mit ${resp.code}")
+            val results = JSONObject(resp.body!!.string())
+                .optJSONObject("result")?.optJSONArray("results") ?: return@withContext emptyList()
+            (0 until results.length()).mapNotNull { i -> parse(results.getJSONObject(i)) }
+        }
+    }
+
+    private fun parse(o: JSONObject): Video? {
+        val channel = o.optString("channel")
+        val url = o.optString("url_video_hd").ifBlank { o.optString("url_video") }
+        if (url.isBlank() || channel in excludedChannels) return null
+        val raw = o.optString("title")
+        val topic = o.optString("topic")
+        return Video(
+            id = o.optString("id"),
+            channel = channel,
+            topic = topic,
+            title = Meta.stripTopic(Meta.displayTitle(raw), topic),
+            rawTitle = raw,
+            description = o.optString("description"),
+            duration = o.optInt("duration"),
+            timestamp = o.optLong("timestamp"),
+            url = url,
+            subtitleUrl = o.optString("url_subtitle"),
+            language = Meta.language(raw),
+        )
+    }
+}
+
+/** Stellt die Inhalte für die Startseite zusammen. */
+object Catalog {
+
+    // ---------- Filme ----------
+    // Exakte Film-Rubriken der Sender (aus der Datenquelle ermittelt).
+    private val filmTopics = setOf(
+        "Filme in der ARD", "FilmMittwoch im Ersten", "Film im NDR",          // ARD + Dritte
+        "Filme", "Spielfilm-Highlights", "Herzkino", "Das kleine Fernsehspiel", // ZDF, ZDFneo
+        "Kino - Filme", "Fernsehfilme und Serien - Fernsehfilme",               // ARTE
+        "Spielfilm", "Fernsehfilm",                                             // 3sat
+        "Film", "Schweizer Film",                                               // SRF, SWR
+    )
+    private val filmQueries = listOf("Filme in der ARD", "Filme", "Kino - Filme", "Spielfilm",
+        "Fernsehfilm", "Film", "Das kleine Fernsehspiel", "Herzkino", "Schweizer Film")
+
+    suspend fun films(): List<Video> = collect(filmQueries, minSeconds = 60 * 60) { it.topic in filmTopics }
+
+    // ---------- Krimi ----------
+    private val crimeTopic = Regex(
+        "^(Tatort|Tatort aus Österreich|Polizeiruf 110|LandKrimi|Wilsberg|Ein starkes Team|" +
+            "Der Kommissar und .*|.*-Krimi|Ein Krimi aus .*|Der Krimi .*)$"
+    )
+    private val crimeQueries = listOf("Tatort", "Polizeiruf 110", "Krimi", "LandKrimi", "Wilsberg", "Ein starkes Team")
+
+    suspend fun crime(): List<Video> = collect(crimeQueries, minSeconds = 60 * 60) { crimeTopic.matches(it.topic) }
+
+    // ---------- Dokus ----------
+    private val docTopic = Regex(
+        "^(Dokumentationen|Dokumentarfilm|Dokumentarfilmzeit|DOK|Kulturdoku|Universum|Universum History|" +
+            "Terra X|Terra X History|Expeditionen|Expeditionen ins Tierreich|Expedition in die Heimat|" +
+            "Dokus & Reportagen im BR|Doku & Reportage|ZDFinfo Doku|" +
+            "Entdeckung der Welt - .*|Wissenschaft - .*|Geschichte - .*)$"
+    )
+    private val docQueries = listOf("Dokumentationen", "Dokumentarfilm", "Doku", "Universum", "Terra X",
+        "Expedition", "Entdeckung der Welt", "Geschichte", "Wissenschaft")
+
+    suspend fun docs(): List<Video> = collect(docQueries, minSeconds = 40 * 60) { docTopic.matches(it.topic) }
+
+    // ---------- Serien ----------
+    /** Sammel-Rubriken, in denen der Serienname im Titel steht (z.B. ARTE). */
+    private val genericSeriesTopics = setOf("Fernsehfilme und Serien - Serien", "Serien")
+
+    /** Formate mit Folgennummer, die aber keine Serien sind (Nachrichten, Talk, Magazine, Shows). */
+    private val notSeries = Regex(
+        "journal|magazin|kulturzeit|\\bnano\\b|hallo deutschland|bares für rares|küchenschlacht|illner|lanz|" +
+            "tagesschau|tagesthemen|\\bheute\\b|nachrichten|\\bnews\\b|aktuell|\\bsport|quiz|talk|\\bshow\\b|" +
+            "yoga|ernährungs|werwölfe|let's talk|wetter|börse|gottesdienst|landesschau|hier und heute",
+        RegexOption.IGNORE_CASE
+    )
+
+    private fun seriesName(v: Video): String? =
+        (if (v.topic in genericSeriesTopics) Meta.seriesNameFromTitle(v.rawTitle) else v.topic)
+            ?.let { Meta.cleanSeriesName(it) }?.ifBlank { null }
+
+    /** Rubriken, die Filme/Dokus sammeln, sind keine Serien. */
+    private fun isSeriesTopic(topic: String) =
+        !notSeries.containsMatchIn(topic) && topic !in filmTopics && !docTopic.matches(topic)
+
+    suspend fun series(): List<Series> = coroutineScope {
+        val recent = async { Api.search(size = 1000, minSeconds = 20 * 60, maxSeconds = 70 * 60) }
+        val arte = async { Api.search(topic = "Fernsehfilme und Serien - Serien", size = 200, minSeconds = 20 * 60) }
+        val episodes = (recent.await() + arte.await())
+            .filter { it.episode != null && isSeriesTopic(it.topic) }
+
+        groupVersions(episodes)
+            .groupBy { seriesName(it) }
+            .filterKeys { it != null }
+            .filterValues { it.size >= 2 }
+            .map { (name, eps) ->
+                Series(
+                    name = name!!,
+                    channel = preferredChannel(eps.map { it.channel }),
+                    episodes = sortEpisodes(dedupeAcrossChannels(eps)),
                 )
-            }.filter { it.url.isNotBlank() }
-        }
+            }
+            .sortedByDescending { s -> s.episodes.maxOf { it.timestamp } }
+            .take(40)
     }
 
-    private fun detectLanguage(title: String): String = when {
-        title.contains("(Englisch", true) || title.contains("(Original", true) -> "Englisch/Original"
-        title.contains("(Französisch", true) -> "Französisch"
-        else -> "Deutsch"
+    /** Alle verfügbaren Folgen einer Serie nachladen. */
+    suspend fun episodes(series: Series): List<Video> {
+        val found = Api.search(text = series.name, size = 400, minSeconds = 10 * 60)
+            .filter { seriesName(it) == series.name }
+        val all = groupVersions(found).ifEmpty { series.episodes }
+        return sortEpisodes(dedupeAcrossChannels(all))
     }
 
-    suspend fun films(): List<Video> {
-        val raw = mutableListOf<Video>()
-        for (t in listOf("Spielfilm", "Filme in der ARD", "Fernsehfilm", "Spielfilm-Highlights", "Herzkino"))
-            raw += query(topicQuery = t, size = 25, minDuration = 3600)
-        return groupLanguages(raw).sortedByDescending { it.timestamp }
-    }
-    suspend fun crime(): List<Video> {
-        val raw = mutableListOf<Video>()
-        for (t in listOf("Tatort", "Polizeiruf 110", "Kriminalfilm", "Der Alte", "SOKO"))
-            raw += query(topicQuery = t, size = 20, minDuration = 2400)
-        return groupLanguages(raw).sortedByDescending { it.timestamp }
-    }
-    suspend fun docs(): List<Video> =
-        groupLanguages(query(channels = listOf("ZDFinfo", "PHOENIX"), size = 40, minDuration = 1500))
-            .sortedByDescending { it.timestamp }
+    suspend fun search(text: String): List<Video> =
+        dedupeAcrossChannels(groupVersions(Api.search(text = text, size = 150, minSeconds = 5 * 60)))
 
-    suspend fun series(): List<Series> = withContext(Dispatchers.IO) {
-        val raw = query(topicQuery = "Serien", size = 150, minDuration = 900) +
-                  query(text = "Folge", size = 120, minDuration = 900)
-        groupLanguages(raw).groupBy { it.topic }
-            .filter { it.value.size >= 3 && it.key.isNotBlank() }
-            .map { (t, eps) -> Series(t, eps.first().channel, eps.sortedByDescending { it.timestamp }) }
-            .sortedByDescending { it.episodes.first().timestamp }.take(30)
-    }
-    suspend fun episodes(topic: String): List<Video> =
-        groupLanguages(query(topicQuery = "\"$topic\"", size = 100, minDuration = 600)).sortedBy { it.title }
+    /** Sammel-Rubrik (z.B. "Filme in der ARD") statt eines echten Reihen-/Seriennamens? */
+    fun isRubric(topic: String) = topic in filmTopics || docTopic.matches(topic) || topic in genericSeriesTopics
 
-    /** Gruppiert Sprachfassungen: deutsche Hauptfassung bekommt die anderen als variants. */
-    private fun groupLanguages(list: List<Video>): List<Video> {
-        val variantRe = Regex("\\s*\\((Audiodeskription|Englisch|Französisch|Original.*?|mit Gebärden.*?|hörgeschädigt.*?|OmU.*?)\\)",
-            RegexOption.IGNORE_CASE)
-        val groups = LinkedHashMap<String, MutableList<Video>>()
-        for (v in list) {
-            val base = v.title.replace(variantRe, "").trim()
-            if (v.title.contains("Audiodeskription", true) || v.title.contains("Gebärden", true)) continue
-            groups.getOrPut("${v.channel}|${v.topic}|$base") { mutableListOf() }.add(v.copy(title = base))
-        }
-        return groups.values.mapNotNull { g ->
-            val main = g.firstOrNull { it.language == "Deutsch" } ?: g.first()
-            val others = g.filter { it.id != main.id }
-            if (others.isEmpty()) main else main.copy(variants = others)
-        }
+    // ---------- Hilfsfunktionen ----------
+
+    /** Grob suchen (parallel), exakt filtern, Fassungen bündeln, Dopplungen entfernen. */
+    private suspend fun collect(
+        queries: List<String>,
+        minSeconds: Int,
+        keep: (Video) -> Boolean,
+    ): List<Video> = coroutineScope {
+        val raw = queries.map { q -> async { runCatching { Api.search(topic = q, size = 150, minSeconds = minSeconds) }.getOrDefault(emptyList()) } }
+            .awaitAll().flatten()
+            .filter(keep)
+        dedupeAcrossChannels(groupVersions(raw)).sortedByDescending { it.timestamp }.take(60)
     }
+
+    /** Fasst Sprach-/Hörfassungen derselben Sendung zusammen; die deutsche wird Hauptfassung. */
+    private fun groupVersions(list: List<Video>): List<Video> =
+        list.distinctBy { it.id }
+            .groupBy { "${it.channel}|${it.topic}|${Meta.baseTitle(it.rawTitle).lowercase()}" }
+            .values.map { group ->
+                val main = group.firstOrNull { it.language == "Deutsch" } ?: group.first()
+                val others = group.filter { it.id != main.id }.distinctBy { it.language }
+                    .filter { it.language != main.language }
+                main.copy(variants = others)
+            }
+
+    /** Gleiche Sendung auf mehreren Sendern (z.B. Tatort in ARD und NDR) nur einmal zeigen. */
+    private fun dedupeAcrossChannels(list: List<Video>): List<Video> =
+        list.groupBy { normalize(it.topic) + "|" + normalize(it.title) + "|" + (it.episode?.sortKey ?: "") }
+            .values.map { same -> same.minBy { channelRank(it.channel) } }
+
+    private fun sortEpisodes(list: List<Video>): List<Video> =
+        list.sortedWith(compareBy<Video> { it.episode?.sortKey ?: Int.MAX_VALUE }.thenBy { it.timestamp })
+
+    private val channelOrder = listOf("ARD", "ZDF", "ARTE.DE", "3Sat", "ZDFneo", "ONE", "SRF", "ORF")
+    private fun channelRank(ch: String) = channelOrder.indexOf(ch).let { if (it < 0) channelOrder.size else it }
+    private fun preferredChannel(chs: List<String>) = chs.minBy { channelRank(it) }
+    private fun normalize(s: String) = s.lowercase().replace(Regex("[^a-z0-9äöüß]"), "")
 }

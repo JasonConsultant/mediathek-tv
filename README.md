@@ -1,43 +1,48 @@
 # Mediathek TV (Android TV)
 
-Eine Android-TV-App, die ARD, ZDF, die Dritten, ARTE, 3sat, phoenix und SRF in einer
-Oberfläche zeigt. Datenquelle: öffentliche MediathekViewWeb-API. Keine Sender-Logos.
+Android-TV-App für Filme, Serien, Krimis und Dokus aus allen frei verfügbaren
+öffentlich-rechtlichen Mediatheken: ARD, ZDF, ARTE, 3sat, ORF, SRF und die Dritten.
+Datenquelle ist die öffentliche MediathekViewWeb-API. Die App zeigt keine Sender-Logos.
 
-## Bauen
-1. Android Studio (Koala oder neuer) öffnen → "Open" → diesen Ordner.
-2. Gradle-Sync abwarten (beim ersten Mal lädt es Abhängigkeiten).
-3. Build → Build APK(s). Die APK liegt dann unter `app/build/outputs/apk/debug/`.
+## Funktionen
+- **Startseite** mit den Reihen Filme, Serien, Krimi und Dokumentationen sowie einer Suche über alle Sender
+- **Serien**: eine Kachel pro Serie, Staffeln zusammengeführt. Die Folgenübersicht ist nach Staffel/Folge sortiert, mit Staffel-Filter
+- **Detailansicht** mit Genre, Jahr, Dauer, Sender, Sendedatum und Beschreibung
+- **Sprachfassungen**: Originalton, Englisch, Hörfassung usw. sind gebündelt und vor dem Abspielen wählbar
+- **Untertitel**, falls vorhanden, an- und abschaltbar
+- **Automatische Updates** über GitHub Releases
 
-## Auf den Fernseher bringen
-- **Kabellos:** Auf dem TV Entwickleroptionen + USB-Debugging aktivieren
-  (Einstellungen → Über → 7× auf Build-Nummer tippen), dann am PC:
-  `adb connect <IP-des-TVs>` und `adb install app-debug.apk`
-- **Einfach:** APK auf einen USB-Stick, am TV mit "File Commander" o.ä. installieren.
+Genre und Jahr werden aus Titel und Beschreibung gelesen. Sie erscheinen nur, wenn sie dort stehen
+(bei ARTE fast immer, bei ARD/ZDF selten). Eigene Genre- oder Jahresfelder hat die Datenquelle nicht.
 
-## Bedienung
-- Steuerkreuz: durch Reihen und Kacheln navigieren, OK = abspielen
-- Oben: Suchfeld (Fernbedienung/Bildschirmtastatur), Enter = suchen
-- Im Player: OK = Pause, Links/Rechts = 10 s springen, Zurück = beenden
+## Bedienung (Fernbedienung)
+| Wo | Taste | Aktion |
+|---|---|---|
+| Überall | Steuerkreuz / OK | navigieren / öffnen |
+| Überall | Zurück | eine Ebene zurück |
+| Player | OK | Pause / weiter |
+| Player | Links / Rechts | 10 Sekunden zurück / vor |
+| Player | Untertitel-Taste | Untertitel an / aus |
 
 ## Updates
-Bei jedem Push auf `main` baut GitHub Actions automatisch eine neue APK und legt sie als
-Release ab (Tag `v1.<Laufnummer>`). Die App prüft beim Start GitHub Releases und bietet
-die neue Version zum Installieren an – ein Klick auf der Fernbedienung genügt.
-Beim allerersten Mal muss am TV "Unbekannte Apps installieren" für Mediathek TV erlaubt werden.
+Jeder Push auf `main` baut über GitHub Actions eine neue APK und legt sie als Release `v1.<Nummer>` ab.
+Die App prüft beim Start auf neue Releases und bietet die Installation an. Beim ersten Update fragt der
+Fernseher einmal, ob „Mediathek TV“ Apps installieren darf.
 
-Das Repo ist privat: Der Build braucht das Secret `GH_UPDATE_TOKEN` (GitHub → Settings →
-Secrets and variables → Actions), ein Fine-grained-Token mit "Contents: Read-only" nur für
-dieses Repo. Es wird beim Bauen in die App eingebettet, damit sie Updates laden kann.
-Die Release-APK ist mit R8 verschleiert.
+Manuell auslösen: GitHub → Actions → „Build & Release APK“ → „Run workflow“.
 
-Manuell auslösen: GitHub → Actions → "Build & Release APK" → "Run workflow".
+## Erstinstallation
+APK aus dem neuesten Release auf einen USB-Stick kopieren und am Fernseher mit einem Dateimanager
+(z.B. „File Commander“) installieren. Alternativ: `adb connect <IP-des-TVs>` und `adb install MediathekTV.apk`.
 
-## Anpassen
-- Reihen auf der Startseite: `Theme.kt` → `HOME_ROWS`
-- Farben: `Theme.kt` → `TvColors`
-- API-Filter (z.B. Mindestdauer): `Api.kt`
+## Projektaufbau
+| Datei | Inhalt |
+|---|---|
+| `Model.kt` | Datenmodell; erkennt Sprache, Jahr, Genre und Folgennummer |
+| `Api.kt` | Abfrage der Datenquelle und Zusammenstellung der Reihen (`Catalog`) |
+| `MainActivity.kt` | Oberfläche: Startseite, Serien, Details |
+| `PlayerActivity.kt` | Vollbild-Player mit Untertiteln |
+| `Updater.kt` | Update-Prüfung und Installation |
+| `Theme.kt` | Farben |
 
-## Noch offen (nächste Schritte)
-- Vorschaubilder (MediathekViewWeb liefert keine – dafür die ARD-/ZDF-APIs nutzen)
-- Merkliste / "Weiterschauen" lokal speichern
-- Sendungen nach Thema gruppieren (z.B. alle Tatort-Folgen)
+Lokal bauen: in Android Studio öffnen, oder `gradle :app:assembleRelease`.

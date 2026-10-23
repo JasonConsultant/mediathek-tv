@@ -21,7 +21,6 @@ jobs:
       - name: Build release APK
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-          GH_UPDATE_TOKEN: ${{ secrets.GH_UPDATE_TOKEN }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk MediathekTV.apk
