@@ -25,6 +25,11 @@ Release ab (Tag `v1.<Laufnummer>`). Die App prüft beim Start GitHub Releases un
 die neue Version zum Installieren an – ein Klick auf der Fernbedienung genügt.
 Beim allerersten Mal muss am TV "Unbekannte Apps installieren" für Mediathek TV erlaubt werden.
 
+Das Repo ist privat: Der Build braucht das Secret `GH_UPDATE_TOKEN` (GitHub → Settings →
+Secrets and variables → Actions), ein Fine-grained-Token mit "Contents: Read-only" nur für
+dieses Repo. Es wird beim Bauen in die App eingebettet, damit sie Updates laden kann.
+Die Release-APK ist mit R8 verschleiert.
+
 Manuell auslösen: GitHub → Actions → "Build & Release APK" → "Run workflow".
 
 ## Anpassen

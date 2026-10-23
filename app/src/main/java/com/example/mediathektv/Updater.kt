@@ -15,12 +15,14 @@ data class Update(val versionName: String, val versionCode: Int, val apkUrl: Str
 /** Prüft GitHub Releases auf eine neuere Version und installiert sie. */
 object Updater {
     private val client = OkHttpClient()
+    private val token: String get() = BuildConfig.GH_TOKEN
+    private fun auth(b: Request.Builder) = if (token.isNotBlank()) b.header("Authorization", "Bearer $token") else b
 
     suspend fun check(): Update? = withContext(Dispatchers.IO) {
         runCatching {
-            val req = Request.Builder()
+            val req = auth(Request.Builder()
                 .url("https://api.github.com/repos/${BuildConfig.GITHUB_REPO}/releases/latest")
-                .header("Accept", "application/vnd.github+json")
+                .header("Accept", "application/vnd.github+json"))
                 .build()
             client.newCall(req).execute().use { resp ->
                 if (!resp.isSuccessful) return@withContext null
@@ -31,7 +33,7 @@ object Updater {
                 val assets = json.getJSONArray("assets")
                 val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                     .firstOrNull { it.getString("name").endsWith(".apk") } ?: return@withContext null
-                Update(tag.removePrefix("v"), code, apk.getString("browser_download_url"))
+                Update(tag.removePrefix("v"), code, apk.getString("url"))  // API-URL: funktioniert auch bei privatem Repo
             }
         }.getOrNull()
     }
@@ -39,7 +41,9 @@ object Updater {
     suspend fun downloadAndInstall(ctx: Context, update: Update) = withContext(Dispatchers.IO) {
         val dir = File(ctx.cacheDir, "updates").apply { mkdirs() }
         val file = File(dir, "MediathekTV-${update.versionName}.apk")
-        client.newCall(Request.Builder().url(update.apkUrl).build()).execute().use { resp ->
+        val req = auth(Request.Builder().url(update.apkUrl).header("Accept", "application/octet-stream")).build()
+        client.newCall(req).execute().use { resp ->
+            check(resp.isSuccessful) { "Download fehlgeschlagen: ${resp.code}" }
             resp.body!!.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
         }
         val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.fileprovider", file)

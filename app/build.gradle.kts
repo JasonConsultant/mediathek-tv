@@ -18,6 +18,7 @@ android {
         versionCode = buildNumber
         versionName = "1.$buildNumber"
         buildConfigField("String", "GITHUB_REPO", "\"$repoSlug\"")
+        buildConfigField("String", "GH_TOKEN", "\"${System.getenv("GH_UPDATE_TOKEN") ?: ""}\"")
     }
     signingConfigs {
         create("release") {
@@ -29,7 +30,9 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true          // R8: Code verschleiern + verkleinern
+            isShrinkResources = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("release")
         }
         debug {
