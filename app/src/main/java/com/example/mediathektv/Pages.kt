@@ -1,8 +1,13 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+@file:OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 
 package com.example.mediathektv
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.BringIntoViewSpec
+import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.platform.LocalDensity
+import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -176,26 +181,53 @@ fun personalShelves(tab: Tab): List<Shelf> {
 fun ShelfPage(app: AppState, tab: Tab, shelves: List<Shelf>, nav: Nav, header: (@Composable () -> Unit)? = null, empty: String? = null) {
     val ui = app.pages.getValue(tab)
     val firstKey = shelves.firstOrNull()?.let { s -> s.tiles.firstOrNull()?.let { "${s.key}|${it.key}" } }
-    // Vorschau: fokussierte Kachel, sonst die erste der Seite
-    val shown = ui.preview ?: shelves.firstOrNull()?.tiles?.firstOrNull()?.preview(app.country)
     LaunchedEffect(firstKey) { if (ui.focusKey == null) ui.focusKey = firstKey }
 
     Column(Modifier.fillMaxSize()) {
         header?.invoke()
-        Hero(shown, height = if (header != null) 150.dp else 190.dp)
+        PageHero(ui, shelves, app.country, if (header != null) 150.dp else 190.dp)
         if (shelves.isEmpty()) {
             empty?.let { Hint(it, Modifier.padding(start = PAGE_PADDING, top = 12.dp)) }
             return@Column
         }
-        LazyColumn(
-            state = ui.column,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 6.dp, bottom = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
-        ) {
-            items(shelves, key = { it.key }) { shelf -> ShelfRow(app, ui, shelf, nav) }
+        // Hoch/Runter: die gewählte Reihe rückt immer an dieselbe Stelle direkt unter die Vorschau.
+        // In den Reihen selbst bleibt das normale seitliche Scrollen.
+        val rowSpec = LocalBringIntoViewSpec.current
+        val density = LocalDensity.current
+        val columnSpec = remember(density) { RowToTop(with(density) { 34.dp.toPx() }) }
+        CompositionLocalProvider(LocalBringIntoViewSpec provides columnSpec) {
+            LazyColumn(
+                state = ui.column,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(top = 6.dp, bottom = 300.dp),
+                verticalArrangement = Arrangement.spacedBy(18.dp),
+            ) {
+                items(shelves, key = { it.key }) { shelf ->
+                    CompositionLocalProvider(LocalBringIntoViewSpec provides rowSpec) { ShelfRow(app, ui, shelf, nav) }
+                }
+            }
         }
     }
+}
+
+/** Scrollt so, dass die fokussierte Karte samt Reihentitel oben steht. */
+private class RowToTop(private val titlePx: Float) : BringIntoViewSpec {
+    override fun calculateScrollDistance(offset: Float, size: Float, containerSize: Float): Float = offset - titlePx
+}
+
+/**
+ * Vorschau oben – eigene Komponente, damit beim Weiterblättern nur sie neu gezeichnet wird.
+ * Kurz verzögert, damit beim schnellen Durchscrollen nicht jedes große Bild geladen wird.
+ */
+@Composable
+private fun PageHero(ui: PageUi, shelves: List<Shelf>, country: String, height: androidx.compose.ui.unit.Dp) {
+    val target = ui.preview ?: remember(shelves) { shelves.firstOrNull()?.tiles?.firstOrNull()?.preview(country) }
+    var shown by remember { mutableStateOf(target) }
+    LaunchedEffect(target) {
+        if (shown != null) delay(200)
+        shown = target
+    }
+    Hero(shown, height)
 }
 
 @Composable
@@ -207,6 +239,7 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
         }
         LazyRow(
             state = ui.row(shelf.key),
+            modifier = Modifier.focusRestorer(),   // zurück in eine Reihe: dort weiter, wo man war
             contentPadding = PaddingValues(horizontal = PAGE_PADDING),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -214,7 +247,7 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
                 val key = "${shelf.key}|${tile.key}"
                 TileView(
                     tile, app,
-                    Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey, enabled = app.restorePending,
+                    Modifier.width(CARD_WIDTH).restoreFocus(key, { ui.focusKey }, enabled = { app.restorePending },
                         onRestored = { app.restorePending = false }) {
                         ui.focusKey = key
                         ui.preview = tile.preview(app.country) ?: ui.preview
@@ -277,7 +310,7 @@ fun TvPage(app: AppState, nav: Nav) {
                             focusedContentColor = TvColors.Background,
                             selectedContentColor = TvColors.Text,
                         ),
-                        modifier = Modifier.restoreFocus(key, ui.focusKey, enabled = app.restorePending,
+                        modifier = Modifier.restoreFocus(key, { ui.focusKey }, enabled = { app.restorePending },
                             onRestored = { app.restorePending = false }) { ui.focusKey = it; ui.selectedChannel = ch },
                     )
                 }

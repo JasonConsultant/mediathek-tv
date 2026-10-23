@@ -22,6 +22,10 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.Tracks
+import android.app.AlertDialog
+import java.util.Locale
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.launch
@@ -41,7 +45,8 @@ object Playback {
 
 /**
  * Vollbild-Player für Sendungen und Live-TV.
- * Fernbedienung (Bedienleiste ausgeblendet): OK = Pause/Weiter, Links/Rechts = 10 s, Untertitel-Taste = an/aus.
+ * Fernbedienung (Bedienleiste ausgeblendet): OK = Pause/Weiter, Links/Rechts = 10 s,
+ * Hoch / Menü- / Untertitel-Taste = Untertitel wählen oder ausschalten.
  * Live-TV: Hoch/Runter oder Programm +/− = Sender wechseln, OK = Infoleiste mit Jetzt/Danach.
  * Sendungen: setzt an der gespeicherten Stelle fort, speichert den Fortschritt und startet am Ende
  * nach 10 Sekunden die nächste Folge (OK = sofort, Zurück = beenden).
@@ -130,8 +135,8 @@ class PlayerActivity : ComponentActivity() {
         video = v
         live = null
         hasSubtitles = v.hasSubtitles
-        subtitlesOn = hasSubtitles && Playback.subtitles
-        view.setShowSubtitleButton(hasSubtitles)
+        subtitlesOn = Playback.subtitles
+        view.setShowSubtitleButton(true)      // auch für Untertitel, die im Stream selbst stecken
         overlay.visibility = TextView.GONE
 
         val item = MediaItem.Builder().setUri(v.url)
@@ -291,6 +296,48 @@ class PlayerActivity : ComponentActivity() {
             .build()
     }
 
+    private class TextTrack(val group: Tracks.Group, val index: Int, val label: String)
+
+    /** Alle Untertitel der laufenden Sendung (mitgelieferte und im Stream enthaltene). */
+    private fun textTracks(): List<TextTrack> {
+        val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        return groups.flatMap { g ->
+            (0 until g.length).filter { g.isTrackSupported(it) }.map { i ->
+                val f = g.getTrackFormat(i)
+                val lang = f.language?.let { Locale(it).getDisplayLanguage(Locale.GERMAN) }?.takeIf { it.isNotBlank() && it != "und" }
+                val name = f.label ?: lang ?: "Untertitel"
+                val extra = if ((f.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0) " (für Hörgeschädigte)" else ""
+                TextTrack(g, i, name + extra)
+            }
+        }.distinctBy { it.label }
+    }
+
+    /** Auswahl: Aus oder eine der vorhandenen Untertitel-Spuren. */
+    private fun chooseSubtitles() {
+        val tracks = textTracks()
+        if (tracks.isEmpty()) { toast("Für diese Sendung gibt es keine Untertitel."); return }
+        val disabled = C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes
+        val current = if (disabled) 0 else tracks.indexOfFirst { it.group.isTrackSelected(it.index) } + 1
+        val labels = (listOf("Aus") + tracks.map { it.label }).toTypedArray()
+        view.hideController()
+        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Untertitel")
+            .setSingleChoiceItems(labels, current.coerceAtLeast(0)) { dialog, which ->
+                val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                if (which == 0) params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                else {
+                    val t = tracks[which - 1]
+                    params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .setOverrideForType(TrackSelectionOverride(t.group.mediaTrackGroup, t.index))
+                }
+                player.trackSelectionParameters = params.build()
+                subtitlesOn = which != 0
+                Playback.subtitles = subtitlesOn          // gilt auch für die nächste Folge
+                dialog.dismiss()
+            }
+            .show()
+    }
+
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.action == KeyEvent.ACTION_DOWN) {
             if (overlay.visibility == TextView.VISIBLE) {
@@ -299,11 +346,11 @@ class PlayerActivity : ComponentActivity() {
                     KeyEvent.KEYCODE_BACK -> return cancelCountdown()
                 }
             }
-            if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS && hasSubtitles) {
-                subtitlesOn = !subtitlesOn
-                applySubtitles()
-                toast(if (subtitlesOn) "Untertitel an" else "Untertitel aus")
-                return true
+            if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS || event.keyCode == KeyEvent.KEYCODE_MENU) {
+                chooseSubtitles(); return true
+            }
+            if (live == null && !view.isControllerFullyVisible && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
+                chooseSubtitles(); return true
             }
             if (live != null) when (event.keyCode) {
                 KeyEvent.KEYCODE_CHANNEL_UP -> { zap(-1); return true }

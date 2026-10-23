@@ -127,7 +127,6 @@ fun TileCard(
         colors = CardDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
         scale = CardDefaults.scale(focusedScale = 1.08f),
         border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, Color.White), shape = shape)),
-        glow = CardDefaults.glow(),
     ) {
         Column {
             Box(
@@ -162,7 +161,7 @@ fun TileCard(
 fun Picture(url: String, modifier: Modifier) {
     val context = LocalContext.current
     AsyncImage(
-        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(250).build() },
+        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(150).build() },
         contentDescription = null,
         contentScale = ContentScale.Crop,
         modifier = modifier,
@@ -263,11 +262,13 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
  * sonst "zeigt" die Fernbedienung nach dem Zurückkehren ins Leere.
  */
 @Composable
-fun Modifier.restoreFocus(key: String, target: String?, enabled: Boolean = true, onRestored: () -> Unit = {}, onFocused: (String) -> Unit): Modifier {
+fun Modifier.restoreFocus(key: String, target: () -> String?, enabled: () -> Boolean = { true }, onRestored: () -> Unit = {}, onFocused: (String) -> Unit): Modifier {
     val requester = remember { FocusRequester() }
-    val go = enabled && key == target
-    LaunchedEffect(go) {
-        if (go) { withFrameNanos { }; runCatching { requester.requestFocus() }; onRestored() }
+    // Nur beim Erscheinen prüfen und den Zustand nicht in der Komposition lesen – sonst würde jede
+    // Fokus-Bewegung alle sichtbaren Kacheln neu aufbauen (das machte das Blättern träge).
+    LaunchedEffect(Unit) {
+        withFrameNanos { }
+        if (enabled() && key == target()) { runCatching { requester.requestFocus() }; onRestored() }
     }
     return this.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(key) }
 }

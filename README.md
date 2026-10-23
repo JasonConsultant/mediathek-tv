@@ -77,7 +77,7 @@ Neuzugänge, höchstens 7.000 pro Lauf.
 | Überall | Zurück | eine Ebene zurück |
 | Player | OK | Pause / weiter |
 | Player | Links / Rechts | 10 Sekunden zurück / vor |
-| Player | Untertitel-Taste | Untertitel an / aus |
+| Player | Hoch, Menü- oder Untertitel-Taste | Untertitel wählen / ausschalten |
 | Live-TV | Hoch / Runter oder Programm + / − | Sender wechseln (nur hier empfangbare) |
 | Live-TV | OK / Info | Infoleiste: Jetzt und Danach (Programmführer) |
 

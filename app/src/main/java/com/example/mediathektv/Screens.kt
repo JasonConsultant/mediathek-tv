@@ -89,9 +89,9 @@ fun BrowseScreen(app: AppState, state: BrowseState, nav: Nav) {
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
             if (spec.isSeries) gridItems(series, key = { it.id }) { s ->
-                SeriesCard(s, app.country, app.sinceVisit, Modifier.restoreFocus(s.id, state.focusKey) { state.focusKey = it }) { nav.open(SeriesTile(s)) }
+                SeriesCard(s, app.country, app.sinceVisit, Modifier.restoreFocus(s.id, { state.focusKey }) { state.focusKey = it }) { nav.open(SeriesTile(s)) }
             } else gridItems(videos, key = { it.id }) { v ->
-                VideoCard(v, overlineOf(v), v.title, app.sinceVisit, Modifier.restoreFocus(v.id, state.focusKey) { state.focusKey = it }) {
+                VideoCard(v, overlineOf(v), v.title, app.sinceVisit, Modifier.restoreFocus(v.id, { state.focusKey }) { state.focusKey = it }) {
                     nav.open(VideoTile(v, overlineOf(v)))
                 }
             }
@@ -159,7 +159,7 @@ fun SeriesScreen(app: AppState, state: SeriesState, onVideo: (Video, List<Video>
                         overline = v.episode?.label ?: listOfNotNull(v.year?.toString(), dateOf(v.timestamp)).first(),
                         title = Meta.episodeTitle(v.title, s.name),
                         newSince = app.sinceVisit,
-                        modifier = Modifier.restoreFocus(v.id, state.focusKey) { state.focusKey = it },
+                        modifier = Modifier.restoreFocus(v.id, { state.focusKey }) { state.focusKey = it },
                     ) { onVideo(v, if (episodic) queueAfter(ordered, v) else emptyList()) }
                 }
             }
