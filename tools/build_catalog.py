@@ -409,6 +409,45 @@ def write_gz(path, obj):
         f.write(raw)
     return len(raw)
 
+# ---------------------------------------------------------------- Live-TV
+
+LIVE_ORDER = ["SRF 1", "SRF zwei", "SRF info", "Das Erste", "ZDF", "3sat", "ARTE", "ORF 1", "ORF 2", "ORF III",
+              "ZDFneo", "ZDFinfo", "ONE", "tagesschau24", "phoenix", "ARD alpha", "ORF Sport"]
+LIVE_NAMES = {"ARD": "Das Erste", "ARD Alpha": "ARD alpha", "ARD ONE": "ONE", "ARD Tagesschau": "tagesschau24",
+              "ARTE.DE": "ARTE", "3Sat": "3sat", "ZDF.info": "ZDFinfo", "ZDF.neo": "ZDFneo", "PHOENIX": "phoenix",
+              "ORF-1": "ORF 1", "ORF-2": "ORF 2", "ORF-3": "ORF III", "ORF-Sport": "ORF Sport",
+              "WDR (Deutschland)": "WDR"}
+LIVE_EXCLUDE = {"ARTE.FR", "DW", "KiKA"}
+
+def live_channels(rows):
+    """Livestreams aus der Filmliste (Rubrik 'Livestream') + SRF über die offizielle SRG-Schnittstelle.
+    SRF-Streams brauchen eine Freigabe, die nur in der Schweiz ausgestellt wird – die holt die App beim Abspielen."""
+    out = []
+    for r in rows:
+        if r["topic"] != "Livestream" or r["channel"] in LIVE_EXCLUDE or not r["url"]:
+            continue
+        name = re.sub(r"\s*Livestream\s*", " ", r["raw"]).strip()
+        name = LIVE_NAMES.get(name, name)
+        url = r["url"].replace("http://", "https://")
+        o = {"n": name, "c": r["channel"], "u": url}
+        if "/hls/de/" in url:
+            o["alt"] = url.replace("/hls/de/", "/hls/int/")   # internationale Fassung (z.B. Das Erste)
+        out.append(o)
+    try:
+        req = urllib.request.Request("https://il.srgssr.ch/integrationlayer/2.0/srf/mediaList/video/livestreams.json",
+                                     headers={"User-Agent": "Mozilla/5.0"})
+        for m in json.load(urllib.request.urlopen(req, timeout=30)).get("mediaList", []):
+            name = m.get("channel", {}).get("title") or m.get("title", "").replace(" Live", "").replace(" live", "")
+            out.append({"n": name, "c": "SRF", "srg": m["urn"]})
+    except Exception as e:  # SRF nicht erreichbar: ohne SRF weitermachen
+        print(f"SRF-Livestreams nicht abrufbar: {e}", file=sys.stderr)
+    seen, uniq = set(), []
+    for o in out:
+        if o["n"] not in seen:
+            seen.add(o["n"]); uniq.append(o)
+    uniq.sort(key=lambda o: (LIVE_ORDER.index(o["n"]) if o["n"] in LIVE_ORDER else len(LIVE_ORDER), o["n"]))
+    return uniq
+
 # ---------------------------------------------------------------- Erstauftritt ("Neu")
 
 DAY = 24 * 3600
@@ -464,7 +503,7 @@ def write(cat, out_dir):
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
     os.makedirs(os.path.join(out_dir, "s"))
-    index = {k: cat[k] for k in ("version", "generated", "films", "crime", "docs")}
+    index = {k: cat[k] for k in ("version", "generated", "films", "crime", "docs", "live")}
     episodes_total = 0
     for group in ("series", "filmSeries", "docSeries"):
         heads = []
@@ -496,10 +535,13 @@ def main():
     t = time.time()
     rows = load(a.input)
     print(f"Filmliste: {len(rows)} Einträge", file=sys.stderr)
+    live = live_channels(rows)
     cat = build(rows)
+    cat["live"] = live
     assign_first_seen(cat, load_previous(a.previous))
     size, eps = write(cat, a.out)
     stats = {k: len(v) for k, v in cat.items() if isinstance(v, list)}
+    print("Live: " + ", ".join(o["n"] for o in cat["live"]), file=sys.stderr)
     new = {k: sum(o["fs"] >= NOW - DAY for o in cat[k]) for k in ("films", "crime", "docs")}
     new["Folgen"] = sum(e["fs"] >= NOW - DAY for g in ("series", "filmSeries", "docSeries") for s in cat[g] for e in s["e"])
     print(f"Fertig in {time.time()-t:.0f}s: {stats}, {eps} Folgen; Übersicht {size/1e6:.1f} MB → {a.out}/", file=sys.stderr)
