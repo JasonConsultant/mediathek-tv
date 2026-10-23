@@ -10,6 +10,8 @@ class MetaTest {
         assertEquals("Originalton", Meta.language("Sanfte Monster (Originalversion mit Untertitel)"))
         assertEquals("Englisch", Meta.language("The Pope's Exorcist (Englisch)"))
         assertEquals("Deutsch (Hörfassung)", Meta.language("Fischer sucht Frau (Audiodeskription)"))
+        assertEquals("Deutsch (Hörfassung)", Meta.language("Hörfassung: Haarscharf ins Herz"))
+        assertEquals("Haarscharf ins Herz", Meta.baseTitle("Hörfassung: Haarscharf ins Herz"))
     }
 
     @Test fun titles() {

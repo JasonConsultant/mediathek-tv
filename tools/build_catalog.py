@@ -64,7 +64,8 @@ def expand(rel, base):
 
 VERSION = re.compile(r"\s*\((?:Originalversion|Original|OmU|Englisch|Französisch|Audiodeskription|"
                      r"mit Gebärdensprache|Gebärdensprache|mit Untertitel|hörgeschädigt)[^)]*\)"
-                     r"|\s*\((?:nld|eng|fra|ita|spa|pol|dan|swe|nor|fin|tur|ara|rus|ukr|OV|OmdU)\)", re.I)
+                     r"|\s*\((?:nld|eng|fra|ita|spa|pol|dan|swe|nor|fin|tur|ara|rus|ukr|OV|OmdU|ÖGS|Hörfassung)\)"
+                     r"|^\s*(?:Hörfassung|ÖGS)\s*[:|-]\s*", re.I)
 SE = re.compile(r"\s*\(S(\d+)/E(\d+)\)")
 PART = re.compile(r"\s*\((\d+)/(\d+)\)")
 FOLGE = re.compile(r"\bFolge (\d+)\b")
@@ -74,8 +75,8 @@ FILM_SUFFIX = re.compile(r"\s+-\s+(?:Spielfilm|Fernsehfilm|Kinofilm|Dokumentarfi
 
 def language(raw):
     l = raw.lower()
-    if "audiodeskription" in l: return "Deutsch (Hörfassung)"
-    if "gebärden" in l: return "Gebärdensprache"
+    if "audiodeskription" in l or "hörfassung" in l: return "Deutsch (Hörfassung)"
+    if "gebärden" in l or "ögs" in l: return "Gebärdensprache"
     if "(original" in l or "(omu" in l: return "Originalton"
     if "(englisch" in l or "(eng)" in l: return "Englisch"
     if "(nld)" in l: return "Niederländisch"

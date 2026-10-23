@@ -2,28 +2,44 @@ package com.example.mediathektv
 
 import java.util.Calendar
 
+/** Eine abspielbare Quelle mit Geo-Freigabe ("" = weltweit, sonst z.B. "DE-AT-CH" oder "DE"). */
+data class Source(val url: String, val subtitleUrl: String = "", val geo: String = "") {
+    fun playableIn(country: String): Boolean = Geo.playable(geo, country)
+}
+
 /** Eine Sendung (Film, Folge, Doku). [title] ist bereinigt – ohne Sprach- und Folgenzusatz. */
 data class Video(
     val id: String,
     val channel: String,
     val topic: String,
     val title: String,
-    val rawTitle: String,
     val description: String,
-    val duration: Int,              // Sekunden
-    val timestamp: Long,            // Sendedatum, Unix-Sekunden
-    val url: String,
-    val subtitleUrl: String,
-    val language: String,
-    val variants: List<Video> = emptyList(),   // weitere Sprach-/Hörfassungen
+    val duration: Int,                          // Sekunden
+    val timestamp: Long,                        // Sendedatum, Unix-Sekunden
+    val source: Source,
+    val language: String = "Deutsch",
+    val year: Int? = null,
+    val genre: String? = null,
+    val episode: Episode? = null,
+    val variants: List<Video> = emptyList(),    // weitere Sprach-/Hörfassungen
+    val alternatives: List<Source> = emptyList(), // gleiche Sendung mit anderer Geo-Freigabe
+    val geoKnown: Boolean = true,               // false bei Live-Suchtreffern (ohne Geo-Angabe)
 ) {
+    val url: String get() = source.url
+    val subtitleUrl: String get() = source.subtitleUrl
     val minutes: Int get() = duration / 60
     val hasSubtitles: Boolean get() = subtitleUrl.isNotBlank()
-    val year: Int? by lazy { Meta.year(rawTitle, description) }
-    val genre: String? by lazy { Meta.genre(rawTitle, description) }
-    val episode: Episode? by lazy { Meta.episode(rawTitle, topic) }
     /** Alle Fassungen inklusive dieser, Deutsch zuerst. */
     val versions: List<Video> get() = listOf(this) + variants
+
+    fun availableIn(country: String): Boolean =
+        source.playableIn(country) || alternatives.any { it.playableIn(country) }
+
+    /** Diese Sendung mit einer im Land abspielbaren Quelle, sonst null. Fassungen ebenso gefiltert. */
+    fun forCountry(country: String): Video? {
+        val src = (listOf(source) + alternatives).firstOrNull { it.playableIn(country) } ?: return null
+        return copy(source = src, variants = variants.mapNotNull { it.forCountry(country) }, alternatives = emptyList())
+    }
 }
 
 data class Episode(val season: Int?, val number: Int) {
@@ -31,8 +47,39 @@ data class Episode(val season: Int?, val number: Int) {
     val sortKey: Int get() = (season ?: 0) * 10_000 + number
 }
 
-/** Eine Serie mit ihren (bisher bekannten) Folgen. */
-data class Series(val name: String, val channel: String, val episodes: List<Video>)
+enum class SeriesKind { SERIES, FILM_SERIES, DOC_SERIES }
+
+/** Kopfdaten einer Serie/Reihe; die Folgen werden erst beim Öffnen geladen. */
+data class SeriesInfo(
+    val id: String,
+    val name: String,
+    val channel: String,
+    val kind: SeriesKind,
+    val crime: Boolean,
+    val count: Int,
+    val latest: Long,
+    val description: String,
+    val availability: Map<String, Int>,         // abspielbare Folgen je Land
+) {
+    fun availableIn(country: String) = (availability[country] ?: 0) > 0
+    fun countIn(country: String) = availability[country] ?: count
+}
+
+/** Geo-Freigaben der Sender. */
+object Geo {
+    val countries = listOf("CH", "DE", "AT")
+    private val eu = setOf("DE", "AT", "FR", "IT", "NL", "BE", "LU", "ES", "PT", "DK", "SE", "FI", "PL", "CZ", "IE")
+
+    fun playable(geo: String, country: String): Boolean {
+        if (geo.isBlank()) return true
+        val parts = geo.split('-')
+        return country in parts || ("EU" in parts && country in eu)
+    }
+
+    fun name(country: String) = when (country) {
+        "CH" -> "Schweiz"; "DE" -> "Deutschland"; "AT" -> "Österreich"; else -> country
+    }
+}
 
 /** Liest Zusatzinfos aus Titel und Beschreibung. Liefert null, wenn nichts Verlässliches drinsteht. */
 object Meta {
@@ -41,7 +88,8 @@ object Meta {
     // Sprach-/Barrierefreiheits-Zusätze am Titelende, z.B. "(Originalversion mit Untertitel)"
     private val versionSuffix = Regex(
         "\\s*\\((?:Originalversion|Original|OmU|Englisch|Französisch|Audiodeskription|" +
-            "mit Gebärdensprache|Gebärdensprache|mit Untertitel|hörgeschädigt)[^)]*\\)",
+            "mit Gebärdensprache|Gebärdensprache|mit Untertitel|hörgeschädigt|Hörfassung|ÖGS)[^)]*\\)" +
+            "|^\\s*(?:Hörfassung|ÖGS)\\s*[:|-]\\s*",
         RegexOption.IGNORE_CASE
     )
     private val seasonEpisode = Regex("\\s*\\(S(\\d+)/E(\\d+)\\)")
@@ -53,8 +101,8 @@ object Meta {
     private val filmSuffix = Regex("\\s+-\\s+(?:Spielfilm|Fernsehfilm|Kinofilm|Dokumentarfilm),.*$")
 
     fun language(rawTitle: String): String = when {
-        rawTitle.contains("Audiodeskription", true) -> "Deutsch (Hörfassung)"
-        rawTitle.contains("Gebärden", true) -> "Gebärdensprache"
+        rawTitle.contains("Audiodeskription", true) || rawTitle.contains("Hörfassung", true) -> "Deutsch (Hörfassung)"
+        rawTitle.contains("Gebärden", true) || rawTitle.contains("ÖGS") -> "Gebärdensprache"
         rawTitle.contains("(Original", true) || rawTitle.contains("(OmU", true) -> "Originalton"
         rawTitle.contains("(Englisch", true) -> "Englisch"
         rawTitle.contains("(Französisch", true) -> "Französisch"
@@ -85,6 +133,18 @@ object Meta {
             .replace(Regex("\\s*[-–|]\\s*$t$", RegexOption.IGNORE_CASE), "")
             .trim().ifBlank { title }
     }
+
+    private val rubrics = setOf(
+        "Filme in der ARD", "Filme im Ersten", "FilmMittwoch im Ersten", "Film im NDR", "Debüt im Dritten", "ARD Debüt",
+        "Film & Fiktion", "Filme", "Spielfilm-Highlights", "Herzkino", "Das kleine Fernsehspiel", "Spielfilm",
+        "Fernsehfilm", "Spielfilm in 3sat", "Fernsehfilm in 3sat", "Der Fernsehfilm der Woche", "3satPublikumspreis",
+        "Film", "Schweizer Film", "Krimi und Thriller", "Dokumentationen", "Dokumentarfilm", "Dokumentarfilmzeit",
+        "DOK", "Dokus", "ZDFinfo Doku", "Doku & Reportage", "Dokus & Reportagen im BR", "Cinema Strikes Back",
+    )
+    private val rubricPrefix = Regex("^(Kino|Fernsehfilme und Serien|Entdeckung der Welt|Wissenschaft|Geschichte|Aktuelles und Gesellschaft|Kultur und Pop) - ")
+
+    /** Sammel-Rubrik ("Filme in der ARD") statt eines Reihennamens ("Tatort")? */
+    fun isRubric(topic: String): Boolean = topic in rubrics || rubricPrefix.containsMatchIn(topic) || topic.endsWith("- die Einzeldokus")
 
     /** "Soko Donau Staffel 9" -> "Soko Donau" */
     fun cleanSeriesName(name: String): String = name.replace(staffelSuffix, "").trim()
