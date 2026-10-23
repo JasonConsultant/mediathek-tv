@@ -2,8 +2,13 @@
 
 package com.example.mediathektv
 
+import android.app.SearchManager
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
+import android.speech.RecognizerIntent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -58,9 +63,28 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+/** Von außen angestoßen: Startbildschirm ("Weiterschauen"-Eintrag) oder System-Suche. */
+private object Incoming {
+    var playKey by mutableStateOf<String?>(null)
+    var query by mutableStateOf<String?>(null)
+
+    fun handle(intent: Intent?) {
+        when (intent?.action) {
+            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "mediathektv" }?.getQueryParameter("key")?.let { playKey = it }
+            Intent.ACTION_SEARCH -> intent.getStringExtra(SearchManager.QUERY)?.takeIf { it.isNotBlank() }?.let { query = it }
+        }
+    }
+}
+
 class MainActivity : ComponentActivity() {
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        Incoming.handle(intent)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        Incoming.handle(intent)
         Library.init(applicationContext)
         CatalogRefreshWorker.schedule(this)
         setContent {
@@ -297,7 +321,11 @@ private fun App() {
     DisposableEffect(Unit) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> app.onAppLeft()
+                Lifecycle.Event.ON_STOP -> {
+                    app.onAppLeft()
+                    val ctx = context.applicationContext
+                    Thread { WatchNext.sync(ctx) }.start()
+                }
                 Lifecycle.Event.ON_START -> app.onAppReturned()
                 else -> Unit
             }
@@ -305,6 +333,26 @@ private fun App() {
         val process = ProcessLifecycleOwner.get().lifecycle
         process.addObserver(observer)
         onDispose { process.removeObserver(observer) }
+    }
+
+    // Klick auf "Weiterschauen" im Startbildschirm: direkt fortsetzen (mit nächsten Folgen, falls Serie)
+    LaunchedEffect(Incoming.playKey) {
+        val key = Incoming.playKey ?: return@LaunchedEffect
+        Incoming.playKey = null
+        val p = Library.progress[key] ?: return@LaunchedEffect
+        val queue = if (p.seriesId != null && p.video.episode != null) runCatching {
+            val eps = app.repo.episodes(p.seriesId).mapNotNull { it.forCountry(app.country) }
+            queueAfter(eps, eps.firstOrNull { it.stableKey == key } ?: p.video)
+        }.getOrDefault(emptyList()) else emptyList()
+        PlayerActivity.play(context, p.video, false, queue, p.seriesId, p.seriesName)
+    }
+    // Suchanfrage vom System
+    LaunchedEffect(Incoming.query) {
+        val q = Incoming.query ?: return@LaunchedEffect
+        Incoming.query = null
+        while (stack.size > 1) stack.removeAt(stack.lastIndex)
+        app.query = q
+        runSearch(app)
     }
 
     BackHandler(enabled = stack.size > 1) { stack.removeAt(stack.lastIndex) }
@@ -462,8 +510,29 @@ private fun Header(app: AppState, onSearch: () -> Unit, onCheckUpdate: () -> Uni
         Spacer(Modifier.width(12.dp))
         Chip("Land: ${Geo.name(app.country)}", selected = false) { app.nextCountry() }
         Spacer(Modifier.width(12.dp))
+        VoiceButton { spoken -> app.query = spoken; onSearch() }
         SearchField(app.query, onChange = { app.query = it; if (it.isBlank()) app.search = null }, onSearch = onSearch)
     }
+}
+
+/** Spracheingabe für die Suche – nur sichtbar, wenn das Gerät Spracherkennung anbietet. */
+@Composable
+private fun VoiceButton(onResult: (String) -> Unit) {
+    val context = LocalContext.current
+    val available = remember {
+        context.packageManager.queryIntentActivities(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isNotEmpty()
+    }
+    if (!available) return
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(onResult)
+    }
+    Chip("🎤  Sprechen", selected = false) {
+        launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
+            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Was möchtest du sehen?"))
+    }
+    Spacer(Modifier.width(12.dp))
 }
 
 @Composable

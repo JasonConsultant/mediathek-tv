@@ -267,6 +267,8 @@ class PlayerActivity : ComponentActivity() {
         super.onStop()
         saveProgress()
         player.pause()
+        val ctx = applicationContext
+        Thread { WatchNext.sync(ctx) }.start()
     }
 
     override fun onDestroy() {
