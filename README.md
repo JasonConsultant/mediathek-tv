@@ -80,6 +80,7 @@ Neuzugänge, höchstens 7.000 pro Lauf.
 | Player | Hoch, Menü- oder Untertitel-Taste | Untertitel wählen / ausschalten |
 | Live-TV | Hoch / Runter oder Programm + / − | Sender wechseln (nur hier empfangbare) |
 | Live-TV | OK / Info | Infoleiste: Jetzt und Danach (Programmführer) |
+| Live-TV | Menü- oder Untertitel-Taste | Untertitel wählen (standardmäßig aus) |
 
 **Programmführer (EPG):** `tools/build_epg.py` holt alle 3 Stunden die frei verfügbaren XMLTV-Listen von
 epgshare01.online (Deutschland + Schweiz) und legt `epg.json.gz` in den Branch `catalog`.

@@ -40,6 +40,7 @@ object Playback {
     var seriesId: String? = null
     var seriesName: String? = null
     var live: LiveChannel? = null
+    var liveSubtitles = false                      // Untertitel im Live-TV nur auf Wunsch
     var channels: List<LiveChannel> = emptyList()   // Senderliste zum Umschalten (Reihenfolge wie in der App)
     var playable: Set<String> = emptySet()          // Sender, die hier empfangbar sind
 }
@@ -207,7 +208,15 @@ class PlayerActivity : ComponentActivity() {
         Playback.live = ch
         video = null
         triedAlternative = false
-        view.setShowSubtitleButton(false)
+        // Live: Untertitel aus, bis man sie selbst wählt (Menü-/Untertitel-Taste oder Symbol in der Bedienleiste);
+        // sonst schaltet der Player bei Sendern mit deutscher Untertitelspur ungefragt ein.
+        subtitlesOn = Playback.liveSubtitles
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesOn)
+            .setPreferredTextLanguage(if (subtitlesOn) "de" else null)
+            .build()
+        view.setShowSubtitleButton(true)
         view.hideController()
         showBanner()
         if (ch.srgUrn.isNotBlank()) {
@@ -249,7 +258,7 @@ class PlayerActivity : ComponentActivity() {
             }
             if (next != null) append("\nDanach  ").append(next.times).append("  ").append(next.title)
             if (note != null) append("\n").append(note)
-            if (Playback.channels.size > 1) append("\n▲▼ Sender wechseln")
+            if (Playback.channels.size > 1) append("\n▲▼ Sender wechseln  ·  Menü-Taste: Untertitel")
         }
         banner.visibility = TextView.VISIBLE
         handler.removeCallbacks(hideBanner)
@@ -347,7 +356,8 @@ class PlayerActivity : ComponentActivity() {
                 }
                 player.trackSelectionParameters = params.build()
                 subtitlesOn = which != 0
-                Playback.subtitles = subtitlesOn          // gilt auch für die nächste Folge
+                if (live != null) Playback.liveSubtitles = subtitlesOn   // gilt beim Zappen weiter
+                else Playback.subtitles = subtitlesOn                   // gilt auch für die nächste Folge
                 dialog.dismiss()
             }
             .show()
