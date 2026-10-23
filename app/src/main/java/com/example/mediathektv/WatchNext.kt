@@ -34,9 +34,10 @@ object WatchNext {
             }
         }
 
-        val poster = Uri.parse("android.resource://${context.packageName}/${R.drawable.watchnext_poster}")
+        val fallbackPoster = Uri.parse("android.resource://${context.packageName}/${R.drawable.watchnext_poster}")
         for (p in wanted) {
             val v = p.video
+            val poster = v.image?.let { Uri.parse(it) } ?: fallbackPoster
             val program = WatchNextProgram.Builder()
                 .setType(if (v.episode != null) TvContractCompat.WatchNextPrograms.TYPE_TV_EPISODE else TvContractCompat.WatchNextPrograms.TYPE_MOVIE)
                 .setWatchNextType(if (p.position > 0) TvContractCompat.WatchNextPrograms.WATCH_NEXT_TYPE_CONTINUE

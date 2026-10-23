@@ -20,7 +20,8 @@ Dafür wird der vorherige Katalog (--previous) eingelesen und fortgeschrieben.
 
 Aufruf: python3 tools/build_catalog.py [--input Filmliste-akt.xz] [--previous alter_katalog] [--out catalog]
 """
-import argparse, glob, gzip, hashlib, json, lzma, os, re, shutil, sys, time, urllib.request
+import argparse, glob, gzip, hashlib, html, json, lzma, os, re, shutil, sys, time, urllib.parse, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, defaultdict
 
 FILMLISTE_URL = "https://liste.mediathekview.de/Filmliste-akt.xz"
@@ -242,7 +243,7 @@ def bundle(items):
 def compact(r, desc_len=420):
     """Kurzform für die JSON-Ausgabe."""
     o = {"i": r["id"], "c": r["channel"], "t": r["topic"], "n": r["title"], "s": r["secs"], "ts": r["ts"],
-         "u": r["url"]}
+         "u": r["url"], "_w": r.get("web") or ""}
     d = r["desc"]
     if d: o["d"] = d if len(d) <= desc_len else d[:desc_len].rsplit(" ", 1)[0] + " …"
     if r["sub"]: o["ut"] = r["sub"]
@@ -442,6 +443,109 @@ def write_gz(path, obj):
         f.write(raw)
     return len(raw)
 
+# ---------------------------------------------------------------- Vorschaubilder
+
+IMAGE_WIDTH = 480
+MAX_NEW_IMAGES = 7000          # pro Lauf; der Rest folgt in den nächsten Läufen
+UA = {"User-Agent": "Mozilla/5.0 (MediathekTV-Katalog)"}
+OG_IMAGE = re.compile(rb'<meta[^>]+property="og:image"[^>]+content="([^"]+)"|<meta[^>]+content="([^"]+)"[^>]+property="og:image"')
+# Platzhalter der Sender aussortieren ("teaser-mit-logo" beim ZDF ist dagegen ein echtes Bild)
+BAD_IMAGE = re.compile(r"fallback|placeholder|/default[-_.]|logo\.(?:png|svg|jpe?g)", re.I)
+
+def _get(url, limit=None, timeout=10):
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read(limit) if limit else resp.read()
+
+def _og_image(page_url):
+    """Bildadresse aus dem Seitenkopf – es werden nur die ersten 32 KB gelesen."""
+    m = OG_IMAGE.search(_get(page_url, 32768))
+    if not m:
+        return None
+    url = html.unescape((m.group(1) or m.group(2)).decode("utf-8", "replace"))
+    return url if url.startswith("http") and not BAD_IMAGE.search(url) else None
+
+def find_image(web):
+    """Kleines Vorschaubild (~480 px) zur Sendungsseite, je nach Plattform."""
+    host = urllib.parse.urlparse(web).netloc
+    if "srf.ch" in host:
+        q = urllib.parse.parse_qs(urllib.parse.urlparse(web).query)
+        urn = q.get("urn", [None])[0] or (q.get("id", [None])[0] and f"urn:srf:video:{q['id'][0]}")
+        if not urn:
+            return None
+        data = json.loads(_get(f"https://il.srgssr.ch/integrationlayer/2.0/mediaComposition/byUrn/{urn}.json"))
+        img = data["chapterList"][0].get("imageUrl")
+        return img and f"https://il.srgssr.ch/images/?imageUrl={urllib.parse.quote(img, safe='')}&format=jpg&width={IMAGE_WIDTH}"
+    img = _og_image(web)
+    if not img:
+        return None
+    if "ardmediathek.de" in img and "url=" in img:            # ARD verpackt das Bild in einen Proxy-Link
+        img = urllib.parse.parse_qs(urllib.parse.urlparse(img).query)["url"][0]
+    if "image-service" in img:                                 # ARD-Bilddienst: Breite wählbar
+        img = img.replace("{width}", str(IMAGE_WIDTH))
+    elif "epg-image.zdf.de" in img:                            # ZDF / 3sat (Bilddatenbank)
+        img = re.sub(r"layout=\d+x\d+", "layout=384x216", img)
+    elif "zdf.de/assets/" in img:                              # ZDF (Redaktionsbilder)
+        img = re.sub(r"~\d+x\d+", "~384x216", img)
+    elif "api-cdn.arte.tv/img" in img:                         # ARTE
+        img = re.sub(r"/\d+x\d+(\?.*)?$", "/480x270", img)
+    return img
+
+def load_image_cache(prev_dir):
+    path = prev_dir and os.path.join(prev_dir, "images.json.gz")
+    if not path or not os.path.exists(path):
+        return {}
+    return read_gz(path)
+
+def assign_images(cat, cache):
+    """Bilder für Filme/Krimis/Dokus und je ein Titelbild pro Serie. Bekanntes aus dem Cache,
+    Neues wird parallel gesucht (begrenzt pro Lauf). Cache-Eintrag: [bild_oder_leer, geprüft_am]."""
+    targets = {}                                   # Schlüssel -> Website
+    for key in ("films", "crime", "docs"):
+        for o in cat[key]:
+            if o.get("_w"): targets.setdefault(fs_key(o), o["_w"])
+    for group in ("series", "filmSeries", "docSeries"):
+        for s in cat[group]:
+            for e in sorted(s["e"], key=lambda e: -e["ts"])[:3]:   # neueste Folgen als Titelbild-Kandidaten
+                if e.get("_w"): targets.setdefault(fs_key(e), e["_w"])
+
+    todo = [k for k in targets if k not in cache or (not cache[k][0] and NOW - cache[k][1] > 7 * 86400)]
+    todo = todo[:MAX_NEW_IMAGES]
+    def work(k):
+        try:
+            return k, find_image(targets[k]) or ""
+        except Exception:
+            return k, ""
+    t = time.time()
+    found = 0
+    with ThreadPoolExecutor(32) as ex:
+        for k, img in ex.map(work, todo):
+            cache[k] = [img, NOW]
+            found += bool(img)
+    print(f"Bilder: {len(targets)} benötigt, {len(todo)} neu gesucht ({found} gefunden) in {time.time()-t:.0f}s", file=sys.stderr)
+
+    def img_of(o):
+        c = cache.get(fs_key(o))
+        return c[0] if c and c[0] else None
+    for key in ("films", "crime", "docs"):
+        for o in cat[key]:
+            if (im := img_of(o)): o["im"] = im
+    for group in ("series", "filmSeries", "docSeries"):
+        for s in cat[group]:
+            for e in s["e"]:
+                if (im := img_of(e)): e["im"] = im
+            cover = next((e["im"] for e in sorted(s["e"], key=lambda e: -e["ts"]) if e.get("im")), None)
+            if cover: s["im"] = cover
+    # Cache klein halten: nur, was noch im Katalog ist
+    return {k: v for k, v in cache.items() if k in targets}
+
+def strip_internal(cat):
+    for key in ("films", "crime", "docs"):
+        for o in cat[key]: o.pop("_w", None)
+    for group in ("series", "filmSeries", "docSeries"):
+        for s in cat[group]:
+            for e in s["e"]: e.pop("_w", None)
+
 # ---------------------------------------------------------------- Live-TV
 
 LIVE_ORDER = ["SRF 1", "SRF zwei", "SRF info", "Das Erste", "ZDF", "3sat", "ARTE", "ORF 1", "ORF 2", "ORF III",
@@ -547,6 +651,7 @@ def write(cat, out_dir):
             recent = max(eps, key=lambda e: e["ts"])
             heads.append({
                 "id": s["id"], "n": s["n"], "c": s["c"], "k": s["k"], **({"cr": 1} if s.get("cr") else {}),
+                **({"im": s["im"]} if s.get("im") else {}),
                 "cnt": len(eps), "new": s["new"],
                 "d": (recent.get("d") or "")[:240],
                 # Anzahl abspielbarer Folgen je Land – die App blendet Serien ohne Folgen aus
@@ -560,13 +665,17 @@ def write(cat, out_dir):
     return size, episodes_total
 
 def main():
+    global MAX_NEW_IMAGES
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", help="lokale Filmliste-akt.xz (sonst Download)")
     ap.add_argument("--previous", help="Ordner mit dem vorherigen Katalog (für 'Neu')")
     ap.add_argument("--corrections", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "corrections.json"),
                     help="Korrekturliste (Standard: tools/corrections.json)")
     ap.add_argument("--out", default="catalog")
+    ap.add_argument("--no-images", action="store_true", help="keine Vorschaubilder suchen (schneller, zum Testen)")
+    ap.add_argument("--max-new-images", type=int, default=MAX_NEW_IMAGES)
     a = ap.parse_args()
+    MAX_NEW_IMAGES = a.max_new_images
     t = time.time()
     rows = load(a.input)
     print(f"Filmliste: {len(rows)} Einträge", file=sys.stderr)
@@ -574,7 +683,11 @@ def main():
     cat = build(rows, load_corrections(a.corrections))
     cat["live"] = live
     assign_first_seen(cat, load_previous(a.previous))
+    images = {} if a.no_images else assign_images(cat, load_image_cache(a.previous))
+    strip_internal(cat)
     size, eps = write(cat, a.out)
+    if images:
+        write_gz(os.path.join(a.out, "images.json.gz"), images)
     stats = {k: len(v) for k, v in cat.items() if isinstance(v, list)}
     print("Live: " + ", ".join(o["n"] for o in cat["live"]), file=sys.stderr)
     new = {k: sum(o["fs"] >= NOW - DAY for o in cat[k]) for k in ("films", "crime", "docs")}

@@ -38,6 +38,9 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -271,12 +274,12 @@ private class SeriesState(val info: SeriesInfo) {
 
     suspend fun load(repo: CatalogRepository, country: String) {
         val all = repo.episodes(info.id)
-        episodes = withContext(Dispatchers.Default) { all.mapNotNull { it.forCountry(country) } }
+        episodes = withContext(Dispatchers.Default) { all.mapNotNull { it.forCountry(country)?.withCover(info.image) } }
         focusKey = visible.firstOrNull()?.id
     }
 }
 
-private data class Preview(val overline: String, val title: String, val meta: String, val description: String)
+private data class Preview(val overline: String, val title: String, val meta: String, val description: String, val image: String? = null)
 
 /** Sendergruppen für den Filter. */
 private val channelGroups = linkedMapOf(
@@ -341,7 +344,7 @@ private fun App() {
         Incoming.playKey = null
         val p = Library.progress[key] ?: return@LaunchedEffect
         val queue = if (p.seriesId != null && p.video.episode != null) runCatching {
-            val eps = app.repo.episodes(p.seriesId).mapNotNull { it.forCountry(app.country) }
+            val eps = app.repo.episodes(p.seriesId).mapNotNull { it.forCountry(app.country)?.withCover(p.video.image) }
             queueAfter(eps, eps.firstOrNull { it.stableKey == key } ?: p.video)
         }.getOrDefault(emptyList()) else emptyList()
         PlayerActivity.play(context, p.video, false, queue, p.seriesId, p.seriesName)
@@ -435,9 +438,16 @@ private fun HomeScreen(
         Header(app, onSearch, onCheckUpdate)
 
         // Vorschau der fokussierten Kachel
-        Box(Modifier.fillMaxWidth().height(112.dp).padding(horizontal = 48.dp, vertical = 8.dp)) {
+        Box(Modifier.fillMaxWidth().height(140.dp)) {
+            ui.preview?.image?.let { img ->
+                Box(Modifier.align(Alignment.TopEnd).width(250.dp).fillMaxHeight()) {
+                    Picture(img, Modifier.fillMaxSize())
+                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(TvColors.Background, Color.Transparent), endX = 260f)))
+                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, TvColors.Background), startY = 200f)))
+                }
+            }
             ui.preview?.let { p ->
-                Column {
+                Column(Modifier.padding(horizontal = 48.dp, vertical = 8.dp)) {
                     Text(p.overline.uppercase(), color = TvColors.Accent, fontSize = 12.sp, letterSpacing = 1.sp, maxLines = 1)
                     Text(p.title, color = TvColors.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -846,7 +856,7 @@ private fun DetailScreen(app: AppState, video: Video, seriesName: String?, serie
     // Aus "Weiterschauen" geöffnet: folgende Folgen aus der Serie nachladen
     LaunchedEffect(seriesId) {
         if (queue == null && seriesId != null && video.episode != null) {
-            val eps = app.repo.episodes(seriesId).mapNotNull { it.forCountry(app.country) }
+            val eps = app.repo.episodes(seriesId).mapNotNull { it.forCountry(app.country)?.withCover(video.image) }
             queue = queueAfter(eps, eps.firstOrNull { it.stableKey == video.stableKey } ?: video)
         }
     }
@@ -860,6 +870,14 @@ private fun DetailScreen(app: AppState, video: Video, seriesName: String?, serie
     Box(Modifier.fillMaxSize().background(
         Brush.horizontalGradient(listOf(TvColors.channel(video.channel).copy(alpha = 0.35f), TvColors.Background))
     )) {
+        video.image?.let { img ->
+            Box(Modifier.align(Alignment.TopEnd).fillMaxWidth(0.55f).fillMaxHeight(0.75f)) {
+                Picture(img.replace("w=480", "w=960").replace("~384x216", "~768x432").replace("layout=384x216", "layout=768x432")
+                    .replace("/480x270", "/960x540").replace("width=480", "width=960"), Modifier.fillMaxSize())
+                Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(TvColors.Background, Color.Transparent), endX = 500f)))
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, TvColors.Background), startY = 300f)))
+            }
+        }
         Column(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
             Text((seriesName ?: video.topic).uppercase(), color = TvColors.Accent, fontSize = 13.sp, letterSpacing = 1.sp)
             Text(
@@ -932,7 +950,7 @@ private fun VideoCard(video: Video, overline: String, title: String, newSince: L
         add("${video.minutes} Min")
     }
     val isNew = video.firstSeen > 0 && video.firstSeen > newSince
-    TileCard(video.channel, badges, overline, title, modifier, if (isNew && !watched) "NEU" else null, progress, onClick)
+    TileCard(video.channel, badges, overline, title, modifier, if (isNew && !watched) "NEU" else null, progress, video.image, onClick)
 }
 
 @Composable
@@ -943,7 +961,7 @@ private fun SeriesCard(s: SeriesInfo, country: String, newSince: Long, modifier:
         s.channel,
         listOf("${s.countIn(country)} " + if (films) "Filme" else "Folgen"),
         "${kindLabel(s.kind)}${if (s.crime) " · Krimi" else ""}",
-        s.name, modifier,
+        s.name, modifier, image = s.image,
         highlight = if (isNew) (if (films) "NEUER FILM" else "NEUE FOLGEN") else null,
         onClick = onClick,
     )
@@ -970,7 +988,7 @@ private val CARD_IMAGE = 128.dp
 @Composable
 private fun TileCard(
     channel: String, badges: List<String>, overline: String, title: String, modifier: Modifier,
-    highlight: String? = null, progress: Float? = null, onClick: () -> Unit,
+    highlight: String? = null, progress: Float? = null, image: String? = null, onClick: () -> Unit,
 ) {
     val shape = RoundedCornerShape(12.dp)
     Card(
@@ -982,6 +1000,12 @@ private fun TileCard(
     ) {
         Box(Modifier.fillMaxWidth().height(CARD_IMAGE)
             .background(Brush.linearGradient(listOf(TvColors.channel(channel), TvColors.Surface)))) {
+            if (image != null) {
+                Picture(image, Modifier.fillMaxSize())
+                // dunkle Ränder, damit Sender und Abzeichen auf jedem Bild lesbar bleiben
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                    0f to Color.Black.copy(alpha = 0.55f), 0.3f to Color.Transparent, 0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.6f))))
+            }
             Text(channel, color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
             highlight?.let {
@@ -1102,12 +1126,27 @@ private fun overlineOf(v: Video): String =
     (if (Meta.isRubric(v.topic)) listOfNotNull(v.genre, v.year?.toString()) else listOfNotNull(v.topic, v.year?.toString()))
         .joinToString(" · ").ifBlank { v.topic }
 
-private fun Video.preview() = Preview(topic, title, metaLine(this), description)
+private fun Video.preview() = Preview(topic, title, metaLine(this), description, image)
 
 private fun SeriesInfo.preview(country: String) = Preview(
     "${kindLabel(kind)} · $channel", name,
-    "${countIn(country)} " + (if (kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"), description,
+    "${countIn(country)} " + (if (kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"), description, image,
 )
+
+/** Folgen ohne eigenes Bild bekommen das Titelbild der Serie. */
+private fun Video.withCover(cover: String?) = if (image == null && cover != null) copy(image = cover) else this
+
+/** Bild aus dem Netz; bis es geladen ist, bleibt der Hintergrund (Senderfarbe) sichtbar. */
+@Composable
+private fun Picture(url: String, modifier: Modifier) {
+    val context = LocalContext.current
+    AsyncImage(
+        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(250).build() },
+        contentDescription = null,
+        contentScale = ContentScale.Crop,
+        modifier = modifier,
+    )
+}
 
 private fun metaLine(v: Video): String = buildList {
     v.genre?.let { add(it) }

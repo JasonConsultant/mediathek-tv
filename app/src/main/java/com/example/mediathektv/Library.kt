@@ -155,6 +155,7 @@ object Library {
             v.genre?.let { put("ge", it) }
             v.episode?.let { e -> e.season?.let { put("se", it) }; put("ep", e.number) }
             if (v.firstSeen > 0) put("fs", v.firstSeen)
+            v.image?.let { put("im", it) }
             if (v.variants.isNotEmpty()) put("v", JSONArray().apply {
                 v.variants.forEach { x ->
                     put(JSONObject().put("l", x.language).put("u", x.url).apply {
@@ -170,4 +171,5 @@ object Library {
         .put("k", when (s.kind) { SeriesKind.FILM_SERIES -> "filmreihe"; SeriesKind.DOC_SERIES -> "doku"; else -> "serie" })
         .put("cr", if (s.crime) 1 else 0).put("cnt", s.count).put("new", s.latest).put("d", s.description)
         .put("av", JSONObject(s.availability as Map<*, *>)).put("nf", s.newestEpisode).put("nn", s.newEpisodes)
+        .apply { s.image?.let { put("im", it) } }
 }

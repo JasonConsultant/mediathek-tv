@@ -67,6 +67,7 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")   // nur der Streaming-JsonReader
+    implementation("io.coil-kt:coil-compose:2.7.0")      // Vorschaubilder
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")

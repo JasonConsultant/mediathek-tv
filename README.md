@@ -19,6 +19,7 @@ Stand des Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
 - **Weiterschauen:** Die App merkt sich, wo du aufgehört hast. Gesehene Sendungen bekommen einen Haken,
   nach einer Folge startet die nächste mit 10 Sekunden Countdown (OK = sofort, Zurück = beenden)
 - **Meine Liste:** Filme und Serien für später merken
+- **Vorschaubilder** auf allen Kacheln, in der Vorschau und in der Detailansicht (über 90 % der Sendungen)
 - **Live-TV:** über 40 Sender, darunter SRF 1, SRF zwei, SRF info, Das Erste, ZDF, 3sat, ARTE, ORF und die Dritten
 - **Neu:** NEU-Abzeichen seit dem letzten Besuch sowie die Reihen „Neu seit gestern“ und „Neue Folgen“
 - **Automatisch aktuell:** Der Katalog wird alle 3 Stunden erneuert und von der App im Hintergrund geladen
@@ -53,6 +54,10 @@ Talk, Sport, Kochen und Kinderprogramm werden aussortiert.
 **Korrekturen:** Landet eine Reihe in der falschen Gruppe, trägt man sie in `tools/corrections.json` ein
 (`serie`, `filmreihe`, `dokureihe` oder `ausblenden`). Direkt auf GitHub bearbeiten genügt, der Katalog
 wird danach automatisch neu gebaut und ist nach wenigen Minuten in der App.
+
+**Vorschaubilder:** Der Generator liest von jeder Sendungsseite nur den Seitenkopf (32 KB) und nimmt die
+kleine Bildfassung (~480 px). Gefundene Bilder werden gemerkt (`images.json.gz`), neu gesucht wird nur für
+Neuzugänge, höchstens 7.000 pro Lauf.
 
 **Genre und Jahr** stammen aus Titel und Beschreibung und erscheinen nur, wenn sie dort stehen.
 

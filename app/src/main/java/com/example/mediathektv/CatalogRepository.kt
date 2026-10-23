@@ -170,7 +170,7 @@ object CatalogParser {
         var id = ""; var ch = ""; var topic = ""; var title = ""; var desc = ""
         var secs = 0; var ts = 0L; var url = ""; var sub = ""; var geo = ""
         var year: Int? = null; var genre: String? = null; var season: Int? = null; var ep: Int? = null; var fs = 0L
-        var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>(); var lang = "Deutsch"
+        var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>(); var lang = "Deutsch"; var image: String? = null
         r.beginObject()
         while (r.hasNext()) {
             when (r.nextName()) {
@@ -190,6 +190,7 @@ object CatalogParser {
                 "ep" -> ep = r.nextInt()
                 "fs" -> fs = r.nextLong()
                 "l" -> lang = r.nextString()
+                "im" -> image = r.nextString()
                 "v" -> variants = list(r) { lang, src -> lang to src }
                 "a" -> alts = list(r) { _, src -> src }
                 else -> r.skipValue()
@@ -199,7 +200,7 @@ object CatalogParser {
         val main = Video(
             id = id, channel = ch, topic = topic, title = title, description = desc, duration = secs,
             timestamp = ts, source = Source(url, sub, geo), year = year, genre = genre,
-            episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs, language = lang,
+            episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs, language = lang, image = image,
         )
         return main.copy(variants = variants.mapIndexed { i, (lang, src) ->
             main.copy(id = "$id-$i", language = lang, source = src, alternatives = emptyList())
@@ -231,6 +232,7 @@ object CatalogParser {
         while (r.hasNext()) {
             var id = ""; var name = ""; var ch = ""; var kind = SeriesKind.SERIES; var crime = false
             var count = 0; var latest = 0L; var desc = ""; val av = HashMap<String, Int>(); var nf = 0L; var nn = 0
+            var image: String? = null
             r.beginObject()
             while (r.hasNext()) when (r.nextName()) {
                 "id" -> id = r.nextString()
@@ -243,6 +245,7 @@ object CatalogParser {
                 "d" -> desc = r.nextString()
                 "nf" -> nf = r.nextLong()
                 "nn" -> nn = r.nextInt()
+                "im" -> image = r.nextString()
                 "av" -> {
                     r.beginObject()
                     while (r.hasNext()) av[r.nextName()] = r.nextInt()
@@ -251,7 +254,7 @@ object CatalogParser {
                 else -> r.skipValue()
             }
             r.endObject()
-            out.add(SeriesInfo(id, name, ch, kind, crime, count, latest, desc, av, nf, nn))
+            out.add(SeriesInfo(id, name, ch, kind, crime, count, latest, desc, av, nf, nn, image))
         }
         r.endArray()
         return out

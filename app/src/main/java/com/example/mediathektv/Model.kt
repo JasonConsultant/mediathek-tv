@@ -25,6 +25,7 @@ data class Video(
     val alternatives: List<Source> = emptyList(), // gleiche Sendung mit anderer Geo-Freigabe
     val geoKnown: Boolean = true,               // false bei Live-Suchtreffern (ohne Geo-Angabe)
     val firstSeen: Long = 0,                    // erstmals im Katalog (Unix-Sekunden), für "Neu"
+    val image: String? = null,                  // Vorschaubild (~480 px)
 ) {
     val url: String get() = source.url
     val subtitleUrl: String get() = source.subtitleUrl
@@ -72,6 +73,7 @@ data class SeriesInfo(
     val availability: Map<String, Int>,         // abspielbare Folgen je Land
     val newestEpisode: Long = 0,                // Erstauftritt der neuesten Folge
     val newEpisodes: Int = 0,                   // Folgen der letzten 24 Stunden
+    val image: String? = null,                  // Titelbild (Bild der neuesten Folge)
 ) {
     fun availableIn(country: String) = (availability[country] ?: 0) > 0
     fun countIn(country: String) = availability[country] ?: count
