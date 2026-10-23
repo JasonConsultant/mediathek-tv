@@ -491,7 +491,7 @@ def find_image(web):
         img = re.sub(r"/\d+x\d+(\?.*)?$", "/480x270", img)
     return img
 
-IMAGE_CACHE_VERSION = 2   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
+IMAGE_CACHE_VERSION = 3   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
 
 def load_image_cache(prev_dir):
     path = prev_dir and os.path.join(prev_dir, "images.json.gz")
@@ -523,18 +523,25 @@ def assign_images(cat, cache):
 
     todo = [k for k in targets if k not in cache or (not cache[k][0] and NOW - cache[k][1] > 7 * 86400)]
     todo = todo[:MAX_NEW_IMAGES]
+    problems = Counter()                           # Auswertung: warum keine Bilder?
     def work(k):
+        host = urllib.parse.urlparse(targets[k]).netloc
         try:
-            return k, find_image(targets[k]) or ""
-        except Exception:
+            img = find_image(targets[k]) or ""
+            if not img: problems[f"{host}: kein Bild auf der Seite"] += 1
+            return k, img
+        except Exception as e:
+            problems[f"{host}: {type(e).__name__} {getattr(e, 'code', '')}".strip()] += 1
             return k, ""
     t = time.time()
     found = 0
-    with ThreadPoolExecutor(32) as ex:
+    with ThreadPoolExecutor(16) as ex:
         for k, img in ex.map(work, todo):
             cache[k] = [img, NOW]
             found += bool(img)
     print(f"Bilder: {len(targets)} benötigt, {len(todo)} neu gesucht ({found} gefunden) in {time.time()-t:.0f}s", file=sys.stderr)
+    for what, n in problems.most_common(12):
+        print(f"  ohne Bild: {n:5}  {what}", file=sys.stderr)
 
     def img_of(o):
         c = cache.get(fs_key(o))
