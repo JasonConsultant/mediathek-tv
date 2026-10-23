@@ -12,7 +12,7 @@ class CatalogParserTest {
     private val json = """
         {"version":1,"generated":1792900000,
          "films":[{"i":"a1","c":"ARD","t":"Filme in der ARD","n":"Liebe nach Rezept","d":"Text","s":5280,"ts":1792800000,
-                   "u":"https://x/de.mp4","ut":"https://x/ut.xml","g":"DE","y":2007,
+                   "u":"https://x/de.mp4","u2":"https://x/de_klein.mp4","ut":"https://x/ut.xml","g":"DE","y":2007,
                    "v":[{"l":"Deutsch (Hörfassung)","u":"https://x/ad.mp4","g":"DE"}],
                    "a":[{"u":"https://x/ch.mp4","g":"DE-AT-CH"}],"fs":1792850000}],
          "crime":[],"docs":[{"i":"d1","c":"3Sat","t":"Dokumentarfilm","n":"Doku","s":3000,"ts":1,"u":"https://x/d.mp4"}],
@@ -32,6 +32,7 @@ class CatalogParserTest {
             assertEquals("Liebe nach Rezept", f.title)
             assertEquals(2007, f.year)
             assertTrue(f.hasSubtitles)
+            assertEquals("https://x/de_klein.mp4", f.fallbackUrl)
             assertEquals(1, f.variants.size)
             assertEquals("Deutsch (Hörfassung)", f.variants[0].language)
             assertEquals(SeriesKind.FILM_SERIES, idx.filmSeries[0].kind)

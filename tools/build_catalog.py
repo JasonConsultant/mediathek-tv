@@ -51,8 +51,12 @@ def load(path):
             h, m, s = map(int, a[5].split(":")); secs = h * 3600 + m * 60 + s
         except ValueError:
             secs = 0
+        hd = expand(a[14], url)
+        # Beste Qualität zuerst; die Normalfassung als Ersatz, falls der Sender die HD-Datei nicht mehr anbietet
+        # (beim ZDF häufig: die Folge gibt es noch, nur die 1080p-Datei aus der Filmliste nicht mehr).
         out.append(dict(channel=ch, topic=th.strip(), raw=a[2].strip(), secs=secs, desc=a[7].strip(),
-                        url=expand(a[14], url) or url, web=a[9], sub=a[10], ts=int(a[16] or 0), geo=a[18]))
+                        url=hd or url, url2=url if hd and hd != url else "",
+                        web=a[9], sub=a[10], ts=int(a[16] or 0), geo=a[18]))
     return out
 
 def expand(rel, base):
@@ -247,6 +251,7 @@ def compact(r, desc_len=420):
     d = r["desc"]
     if d: o["d"] = d if len(d) <= desc_len else d[:desc_len].rsplit(" ", 1)[0] + " …"
     if r["sub"]: o["ut"] = r["sub"]
+    if r.get("url2"): o["u2"] = r["url2"]
     if r["geo"]: o["g"] = r["geo"]
     y = year(r["raw"], r["desc"]); g = genre(r["raw"], r["desc"])
     if y: o["y"] = y
@@ -255,6 +260,7 @@ def compact(r, desc_len=420):
     if r["ep"] is not None: o["ep"] = r["ep"]
     if r.get("variants"):
         o["v"] = [{"l": v["lang"], "u": v["url"], **({"ut": v["sub"]} if v["sub"] else {}),
+                   **({"u2": v["url2"]} if v.get("url2") else {}),
                    **({"g": v["geo"]} if v["geo"] else {})} for v in r["variants"]]
     if r.get("alts"):
         o["a"] = [{"u": a["url"], **({"ut": a["sub"]} if a["sub"] else {}),
@@ -610,19 +616,26 @@ def strip_internal(cat):
 VALID_TTL = 3 * 24 * 3600      # Prüfergebnis gilt 3 Tage
 MAX_CHECKS = 4000              # pro Lauf (16 Threads, ~2 Min.); der Rest folgt in den nächsten Läufen
 SRF_URN = re.compile(r"urn:srf:video:[0-9a-f-]{36}")
+ARD_ID = re.compile(r"ardmediathek\.de/video/(?:[^/?#]+/)*?([A-Za-z0-9]{20,})(?:[/?#]|$)")
 
 def probe_url(o):
-    """Was wir anfragen, um zu wissen, ob die Sendung noch existiert.
-    SRF: Datenbank-Eintrag (per URN) oder die Untertitel-Datei – die Videodatei bleibt dort auch nach dem
-    Löschen auf dem Server liegen. Alle anderen: die Videodatei selbst."""
+    """Was wir anfragen, um zu wissen, ob die Sendung noch existiert – möglichst ohne Ländersperre:
+    SRF: Datenbank-Eintrag (per URN) oder die Untertitel-Datei (die Videodatei bleibt nach dem Löschen liegen).
+    ARD: Eintrag in der ARD-Datenbank. ZDF: die Sendungsseite. Alle anderen: die Videodatei selbst."""
+    web = o.get("_w") or ""
     if o["c"] == "SRF":
-        m = SRF_URN.search(o.get("_w") or "")
+        m = SRF_URN.search(web)
         if m: return f"https://il.srgssr.ch/integrationlayer/2.0/mediaComposition/byUrn/{m.group(0)}.json?onlyChapters=true"
         return o.get("ut") or o["u"]
+    if o["c"] == "ARD":
+        m = ARD_ID.search(web)
+        if m: return f"https://api.ardmediathek.de/page-gateway/pages/ard/item/{m.group(1)}?embedded=false"
+    if o["c"].startswith("ZDF") and "zdf.de/" in web:
+        return web
     return o["u"]
 
 def http_status(url):
-    req = urllib.request.Request(url, headers=UA, method="HEAD")
+    req = urllib.request.Request(url, headers=UA, method="GET" if "api.ardmediathek.de" in url else "HEAD")
     try:
         with urllib.request.urlopen(req, timeout=12) as resp:
             return resp.status
@@ -634,7 +647,7 @@ def http_status(url):
 def gone(o, status):
     """404/410 = weg. 403 nur bei Sendungen ohne Ländersperre (gesperrte liefern vom Server aus immer 403)."""
     if status in (404, 410): return True
-    if status == 403 and not o.get("g") and o["c"] != "SRF": return True
+    if status == 403 and not o.get("g") and o["c"] not in ("SRF", "ARD") and not o["c"].startswith("ZDF"): return True
     return False
 
 def load_valid_cache(prev_dir):

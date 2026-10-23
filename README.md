@@ -123,8 +123,13 @@ Reihen und Senderliste. Jeder Fokus-Fehler, der auf dem Fernseher abstürzen wü
 
 ## Gelöschte Sendungen
 Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entfernt hat. Dagegen zwei Stufen:
-1. **Katalogbau** (`validate` in `build_catalog.py`): HEAD-Anfrage pro Sendung (SRF: Datenbank-Eintrag per URN oder
-   Untertitel-Datei, weil die Videodatei dort liegen bleibt). 404/410 = weg; 403 nur bei Sendungen ohne Ländersperre,
-   denn gesperrte liefern vom Build-Server aus immer 403. Ergebnis 3 Tage gültig (`valid.json.gz`), max. 4000 Prüfungen je Lauf.
+1. **Katalogbau** (`validate` in `build_catalog.py`), möglichst ohne Ländersperre: ARD über die ARD-Datenbank
+   (`api.ardmediathek.de`, ID aus der Web-Adresse), ZDF über die Sendungsseite, SRF über die SRG-Datenbank (URN) oder
+   die Untertitel-Datei (die Videodatei bleibt dort liegen), alle anderen über die Videodatei (HEAD). 404/410 = weg;
+   403 zählt nur bei Sendern ohne Datenbank-Prüfung und Sendungen ohne Ländersperre. Ergebnis 3 Tage gültig
+   (`valid.json.gz`), max. 4000 Prüfungen je Lauf.
+3. **HD-Datei weg, Sendung da** (beim ZDF häufig): Die Filmliste nennt die 1080p-Datei, das ZDF bietet sie später nicht
+   mehr an. Der Katalog führt deshalb die Normalqualität als Ersatz (`u2`); die App prüft beide und spielt notfalls die
+   Ersatzdatei, auch mitten im Player nach einem 403/404.
 2. **App**: beim Öffnen der Details eine HEAD-Anfrage vom Gerät aus (richtiges Land). Weg → Hinweis statt „Abspielen“,
    die Sendung wird lokal gemerkt (`Library.broken`) und aus allen Reihen ausgeblendet; ebenso nach HTTP 403/404 im Player.

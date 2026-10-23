@@ -283,6 +283,12 @@ class PlayerActivity : ComponentActivity() {
         val http = generateSequence(error as Throwable?) { it.cause }
             .filterIsInstance<HttpDataSource.InvalidResponseCodeException>().firstOrNull()?.responseCode
         if (v != null && http in listOf(403, 404, 410)) {
+            if (v.fallbackUrl.isNotBlank() && v.fallbackUrl != v.url) {    // HD-Datei weg → Normalqualität
+                val alt = v.copy(source = v.source.copy(url = v.fallbackUrl, fallbackUrl = ""))
+                Playback.video = alt
+                startVideo(alt, fromStart = false)
+                return
+            }
             Library.markBroken(v)
             toast("${v.title}: beim Sender nicht mehr verfügbar.")
             finish(); return

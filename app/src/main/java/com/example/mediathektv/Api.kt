@@ -26,6 +26,13 @@ object Net {
 object Availability {
     private val cache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
+    /** Welche Adresse der Sendung läuft: ihre eigene, die Ersatzadresse (Normalqualität) – oder keine (null). */
+    suspend fun playableUrl(v: Video): String? = when {
+        check(v.url) != false -> v.url
+        v.fallbackUrl.isNotBlank() && check(v.fallbackUrl) != false -> v.fallbackUrl
+        else -> null
+    }
+
     suspend fun check(url: String): Boolean? = cache[url] ?: withContext(Dispatchers.IO) {
         runCatching {
             val req = Request.Builder().url(url).head().header("User-Agent", "Mozilla/5.0 (MediathekTV)").build()

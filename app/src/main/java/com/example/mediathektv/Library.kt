@@ -160,6 +160,7 @@ object Library {
         .put("s", v.duration).put("ts", v.timestamp).put("u", v.url).put("l", v.language)
         .apply {
             if (v.subtitleUrl.isNotBlank()) put("ut", v.subtitleUrl)
+            if (v.fallbackUrl.isNotBlank()) put("u2", v.fallbackUrl)
             if (v.source.geo.isNotBlank()) put("g", v.source.geo)
             v.year?.let { put("y", it) }
             v.genre?.let { put("ge", it) }
@@ -170,6 +171,7 @@ object Library {
                 v.variants.forEach { x ->
                     put(JSONObject().put("l", x.language).put("u", x.url).apply {
                         if (x.subtitleUrl.isNotBlank()) put("ut", x.subtitleUrl)
+                        if (x.fallbackUrl.isNotBlank()) put("u2", x.fallbackUrl)
                         if (x.source.geo.isNotBlank()) put("g", x.source.geo)
                     })
                 }

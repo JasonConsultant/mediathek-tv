@@ -168,7 +168,7 @@ object CatalogParser {
 
     private fun video(r: JsonReader): Video {
         var id = ""; var ch = ""; var topic = ""; var title = ""; var desc = ""
-        var secs = 0; var ts = 0L; var url = ""; var sub = ""; var geo = ""
+        var secs = 0; var ts = 0L; var url = ""; var sub = ""; var geo = ""; var url2 = ""
         var year: Int? = null; var genre: String? = null; var season: Int? = null; var ep: Int? = null; var fs = 0L
         var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>(); var lang = "Deutsch"; var image: String? = null
         r.beginObject()
@@ -182,6 +182,7 @@ object CatalogParser {
                 "s" -> secs = r.nextInt()
                 "ts" -> ts = r.nextLong()
                 "u" -> url = r.nextString()
+                "u2" -> url2 = r.nextString()
                 "ut" -> sub = r.nextString()
                 "g" -> geo = r.nextString()
                 "y" -> year = r.nextInt()
@@ -199,7 +200,7 @@ object CatalogParser {
         r.endObject()
         val main = Video(
             id = id, channel = ch, topic = topic, title = title, description = desc, duration = secs,
-            timestamp = ts, source = Source(url, sub, geo), year = year, genre = genre,
+            timestamp = ts, source = Source(url, sub, geo, url2), year = year, genre = genre,
             episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs, language = lang, image = image,
         )
         return main.copy(variants = variants.mapIndexed { i, (lang, src) ->
@@ -212,15 +213,15 @@ object CatalogParser {
         val out = ArrayList<T>()
         r.beginArray()
         while (r.hasNext()) {
-            var lang = ""; var url = ""; var sub = ""; var geo = ""
+            var lang = ""; var url = ""; var sub = ""; var geo = ""; var url2 = ""
             r.beginObject()
             while (r.hasNext()) when (r.nextName()) {
-                "l" -> lang = r.nextString(); "u" -> url = r.nextString()
+                "l" -> lang = r.nextString(); "u" -> url = r.nextString(); "u2" -> url2 = r.nextString()
                 "ut" -> sub = r.nextString(); "g" -> geo = r.nextString()
                 else -> r.skipValue()
             }
             r.endObject()
-            out.add(make(lang, Source(url, sub, geo)))
+            out.add(make(lang, Source(url, sub, geo, url2)))
         }
         r.endArray()
         return out

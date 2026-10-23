@@ -3,7 +3,7 @@ package com.example.mediathektv
 import java.util.Calendar
 
 /** Eine abspielbare Quelle mit Geo-Freigabe ("" = weltweit, sonst z.B. "DE-AT-CH" oder "DE"). */
-data class Source(val url: String, val subtitleUrl: String = "", val geo: String = "") {
+data class Source(val url: String, val subtitleUrl: String = "", val geo: String = "", val fallbackUrl: String = "") {
     fun playableIn(country: String): Boolean = Geo.playable(geo, country)
 }
 
@@ -29,6 +29,8 @@ data class Video(
 ) {
     val url: String get() = source.url
     val subtitleUrl: String get() = source.subtitleUrl
+    /** Normalqualität, falls der Sender die HD-Datei nicht mehr anbietet (sonst leer). */
+    val fallbackUrl: String get() = source.fallbackUrl
     val minutes: Int get() = duration / 60
     val hasSubtitles: Boolean get() = subtitleUrl.isNotBlank()
     /** Alle Fassungen inklusive dieser, Deutsch zuerst. */

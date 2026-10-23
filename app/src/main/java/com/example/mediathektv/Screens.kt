@@ -186,14 +186,20 @@ fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: Str
     val progress = Library.progressOf(video)?.takeIf { it.position > 0 }
     val watched = Library.isWatched(video)
     // Ist die Datei beim Sender noch da? (Die Filmliste enthält auch längst gelöschte Sendungen.)
+    // Läuft ggf. nur die Ersatzadresse (Normalqualität), wird gleich die genommen.
     var available by remember { mutableStateOf<Boolean?>(null) }
+    var playUrl by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(version) {
         available = null
-        available = Availability.check(version.url)
-        if (available == false && version.id == video.id) Library.markBroken(video)
+        val url = Availability.playableUrl(version)
+        playUrl = url
+        available = url != null
+        if (url == null && version.id == video.id) Library.markBroken(video)
     }
-    fun play(fromStart: Boolean) = PlayerActivity.play(
-        context, version, subtitles && version.hasSubtitles, queue.orEmpty(), seriesId, seriesName, fromStart)
+    fun play(fromStart: Boolean) {
+        val v = playUrl?.takeIf { it != version.url }?.let { version.copy(source = version.source.copy(url = it)) } ?: version
+        PlayerActivity.play(context, v, subtitles && version.hasSubtitles, queue.orEmpty(), seriesId, seriesName, fromStart)
+    }
     val playFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) { withFrameNanos { }; runCatching { playFocus.requestFocus() } }
 
