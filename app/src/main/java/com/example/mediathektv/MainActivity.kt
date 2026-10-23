@@ -2,82 +2,31 @@
 
 package com.example.mediathektv
 
-import android.app.SearchManager
-import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.speech.RecognizerIntent
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyGridState
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items as gridItems
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.layout.ContentScale
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.tv.material3.*
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ProcessLifecycleOwner
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
-import kotlinx.coroutines.Dispatchers
+import androidx.tv.material3.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-/** Von außen angestoßen: Startbildschirm ("Weiterschauen"-Eintrag) oder System-Suche. */
-private object Incoming {
-    var playKey by mutableStateOf<String?>(null)
-    var query by mutableStateOf<String?>(null)
-
-    fun handle(intent: Intent?) {
-        when (intent?.action) {
-            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "mediathektv" }?.getQueryParameter("key")?.let { playKey = it }
-            Intent.ACTION_SEARCH -> intent.getStringExtra(SearchManager.QUERY)?.takeIf { it.isNotBlank() }?.let { query = it }
-        }
-    }
-}
 
 class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
@@ -96,231 +45,36 @@ class MainActivity : ComponentActivity() {
                     primary = TvColors.Accent,
                     surface = TvColors.Surface,
                     background = TvColors.Background,
+                    onSurface = TvColors.Text,
+                    inverseOnSurface = TvColors.Background,
                 )
             ) { App() }
         }
     }
 }
 
-// ============================================================================
-// Kategorien, Navigation, Zustand
-// ============================================================================
-
-private enum class Category(val title: String, val unit: String) {
-    FILMS("Filme", "Filme"),
-    SERIES("Serien", "Serien"),
-    CRIME("Krimis", "Krimis"),
-    FILM_SERIES("Film-Reihen", "Reihen"),
-    DOCS("Dokumentationen", "Dokus"),
-    DOC_SERIES("Doku-Reihen", "Reihen");
-
-    val isSeries get() = this == SERIES || this == FILM_SERIES || this == DOC_SERIES
-}
-
-private sealed interface Screen {
-    data object Home : Screen
-    class Browse(val state: BrowseState) : Screen
-    class SeriesView(val state: SeriesState) : Screen
-    /** [queue] = folgende Folgen; null = bei Bedarf aus der Serie [seriesId] nachladen. */
-    class Detail(val video: Video, val seriesName: String? = null, val seriesId: String? = null, val queue: List<Video>? = null) : Screen
-}
-
-/** Katalog nach Land gefiltert: nur, was dort auch abspielbar ist. */
-private class Filtered(
-    val films: List<Video>, val crime: List<Video>, val docs: List<Video>,
-    val series: List<SeriesInfo>, val filmSeries: List<SeriesInfo>, val docSeries: List<SeriesInfo>,
-) {
-    private val dayAgo = System.currentTimeMillis() / 1000 - DAY
-
-    /** Filme, Krimis, Dokus, die in den letzten 24 Stunden in den Katalog kamen – neueste zuerst. */
-    val newVideos: List<Video> = (films + crime + docs).filter { it.firstSeen >= dayAgo }
-        .distinctBy { it.id }.sortedByDescending { it.firstSeen }
-
-    /** Serien und Reihen mit Folgen der letzten 24 Stunden. */
-    val newSeries: List<SeriesInfo> = (series + filmSeries + docSeries).filter { it.newestEpisode >= dayAgo }
-        .sortedByDescending { it.newestEpisode }
-
-    fun videos(c: Category) = when (c) { Category.FILMS -> films; Category.CRIME -> crime; Category.DOCS -> docs; else -> emptyList() }
-    fun series(c: Category) = when (c) { Category.SERIES -> series; Category.FILM_SERIES -> filmSeries; Category.DOC_SERIES -> docSeries; else -> emptyList() }
-    fun size(c: Category) = if (c.isSeries) series(c).size else videos(c).size
-}
-
-private class AppState(context: Context) {
-    val repo = CatalogRepository(context)
-    private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-
-    var index by mutableStateOf<CatalogIndex?>(null)
-    var loading by mutableStateOf(true)
-    var detected by mutableStateOf<String?>(null)
-    var chosen by mutableStateOf(prefs.getString("country", null))   // manuelle Wahl
-
-    val country: String get() = chosen ?: detected ?: Locale.getDefault().country.takeIf { it in Geo.countries } ?: "CH"
-
-    val filtered: Filtered? by derivedStateOf {
-        val i = index ?: return@derivedStateOf null
-        val c = country
-        Filtered(
-            i.films.mapNotNull { it.forCountry(c) }, i.crime.mapNotNull { it.forCountry(c) }, i.docs.mapNotNull { it.forCountry(c) },
-            i.series.filter { it.availableIn(c) }, i.filmSeries.filter { it.availableIn(c) }, i.docSeries.filter { it.availableIn(c) },
-        )
-    }
-
-    fun nextCountry() {
-        val next = Geo.countries[(Geo.countries.indexOf(country) + 1) % Geo.countries.size]
-        chosen = next
-        prefs.edit().putString("country", next).apply()
-    }
-
-    // ---------- Laden & automatisches Nachladen ----------
-    private val mutex = Mutex()
-    private var loadedAt = 0L                                   // Stand des angezeigten Katalogs (Dateizeit)
-    private var lastCheck = prefs.getLong("lastCheck", 0L)      // letzte Prüfung im Netz (ms)
-    private var lastUpdateCheck = 0L
-
-    /** Beim Start: gespeicherten Katalog sofort zeigen, dann im Netz nach einem neuen schauen. */
-    suspend fun start() = coroutineScope {
-        loading = true
-        launch { detected = CountryDetector.detect() }
-        repo.cached()?.let { show(it) }
-        sync(force = true)
-        loading = false
-    }
-
-    /**
-     * Holt einen neuen Katalog, wenn die letzte Prüfung länger als [CHECK_INTERVAL] her ist,
-     * und übernimmt einen Katalog, den der Hintergrund-Job inzwischen gespeichert hat.
-     */
-    suspend fun sync(force: Boolean = false) = mutex.withLock {
-        val now = System.currentTimeMillis()
-        if (force || now - lastCheck >= CHECK_INTERVAL) {
-            lastCheck = now
-            prefs.edit().putLong("lastCheck", now).apply()
-            repo.refresh()?.let { show(it); return@withLock }
-        }
-        if (repo.storedAt() > loadedAt) repo.cached()?.let { show(it) }
-    }
-
-    private fun show(i: CatalogIndex) { index = i; loadedAt = repo.storedAt() }
-
-    fun updateCheckDue(): Boolean {
-        val now = System.currentTimeMillis()
-        if (now - lastUpdateCheck < UPDATE_INTERVAL) return false
-        lastUpdateCheck = now
-        return true
-    }
-
-    // ---------- "Neu seit deinem letzten Besuch" ----------
-    /** Alles, was nach diesem Zeitpunkt (Unix-Sekunden) in den Katalog kam, bekommt ein NEU-Abzeichen. */
-    var sinceVisit by mutableStateOf(prefs.getLong("lastLeft", 0L).takeIf { it > 0 } ?: (nowSec() - DAY))
-
-    /** App wird verlassen (Home-Taste, anderer Sender …) – nicht beim Abspielen eines Films. */
-    fun onAppLeft() = prefs.edit().putLong("lastLeft", nowSec()).apply()
-
-    /** App kommt zurück: nach mindestens einer Stunde Abwesenheit zählt das als neuer Besuch. */
-    fun onAppReturned() {
-        val left = prefs.getLong("lastLeft", 0L)
-        if (left > 0 && nowSec() - left >= 3600) sinceVisit = left
-    }
-
-    // App-Update: von Hand prüfen
-    var update by mutableStateOf<Update?>(null)
-    var updateStatus by mutableStateOf<String?>(null)    // kurze Rückmeldung am Knopf
-
-    suspend fun checkUpdateNow() {
-        updateStatus = "Suche …"
-        val found = Updater.check()
-        update = found
-        updateStatus = if (found == null) "Aktuell ✓ (${BuildConfig.VERSION_NAME})" else null
-        delay(4000)
-        if (updateStatus?.startsWith("Aktuell") == true) updateStatus = null
-    }
-
-    // Startseite
-    val home = HomeUi()
-    // Suche
-    var query by mutableStateOf("")
-    var search by mutableStateOf<SearchResult?>(null)
-}
-
-private class HomeUi {
-    var preview by mutableStateOf<Preview?>(null)
-    var focusKey by mutableStateOf<String?>(null)
-    val column = LazyListState()
-    private val rows = HashMap<String, LazyListState>()
-    fun row(key: String) = rows.getOrPut(key) { LazyListState() }
-}
-
-private class SearchResult(val videos: List<Video>, val series: List<SeriesInfo>, val live: List<Video>?)
-
-private enum class Sort(val label: String) { NEWEST("Neueste"), AZ("A–Z") }
-
-/** Zustand der "Alle anzeigen"-Übersicht – bleibt erhalten, wenn man Details öffnet. */
-private class BrowseState(val category: Category) {
-    var sort by mutableStateOf(Sort.NEWEST)
-    var channel by mutableStateOf<String?>(null)
-    var genre by mutableStateOf<String?>(null)
-    var focusKey by mutableStateOf<String?>(null)
-    val grid = LazyGridState()
-}
-
-private class SeriesState(val info: SeriesInfo) {
-    var episodes by mutableStateOf<List<Video>?>(null)
-    var season by mutableStateOf<Int?>(null)
-    var focusKey by mutableStateOf<String?>(null)
-    val grid = LazyGridState()
-
-    val seasons get() = episodes.orEmpty().mapNotNull { it.episode?.season }.distinct().sorted()
-    val visible get() = episodes.orEmpty().let { e -> season?.let { s -> e.filter { it.episode?.season == s } } ?: e }
-
-    suspend fun load(repo: CatalogRepository, country: String) {
-        val all = repo.episodes(info.id)
-        episodes = withContext(Dispatchers.Default) { all.mapNotNull { it.forCountry(country)?.withCover(info.image) } }
-        focusKey = visible.firstOrNull()?.id
-    }
-}
-
-private data class Preview(val overline: String, val title: String, val meta: String, val description: String, val image: String? = null)
-
-/** Sendergruppen für den Filter. */
-private val channelGroups = linkedMapOf(
-    "ARD & Dritte" to setOf("ARD", "ONE", "ARD-alpha", "BR", "HR", "MDR", "NDR", "RBB", "SR", "SWR", "WDR", "tagesschau24", "Radio Bremen TV"),
-    "ZDF" to setOf("ZDF", "ZDFneo", "ZDFinfo"),
-    "ARTE" to setOf("ARTE.DE"),
-    "3sat" to setOf("3Sat"),
-    "SRF" to setOf("SRF"),
-    "ORF" to setOf("ORF"),
-    "phoenix" to setOf("PHOENIX"),
-)
-private fun groupOf(channel: String) = channelGroups.entries.firstOrNull { channel in it.value }?.key ?: channel
-
-// ============================================================================
-// App
-// ============================================================================
-
 @Composable
 private fun App() {
     val context = LocalContext.current
     val app = remember { AppState(context.applicationContext) }
-    val stack = remember { mutableStateListOf<Screen>(Screen.Home) }
+    val stack = remember { mutableStateListOf<Screen>(Screen.Main) }
     val scope = rememberCoroutineScope()
-    var update by app::update
 
     LaunchedEffect(Unit) { app.start() }
 
-    // Solange die Startseite sichtbar ist: bei Rückkehr und alle 15 Minuten nach Neuem schauen.
-    // Während ein Film läuft (Player im Vordergrund) ruht das.
+    // Solange die App sichtbar ist: bei Rückkehr und alle 15 Minuten nach Neuem schauen.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(lifecycle) {
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 if (!app.loading) app.sync()
-                if (app.updateCheckDue()) Updater.check()?.let { update = it }
+                if (app.updateCheckDue()) Updater.check()?.let { app.update = it }
                 delay(SYNC_TICK)
             }
         }
     }
 
-    // App als Ganzes verlassen / zurückgekehrt (für "Neu seit deinem letzten Besuch")
+    // App als Ganzes verlassen / zurückgekehrt (für "Neu seit deinem letzten Besuch" und den TV-Startbildschirm)
     DisposableEffect(Unit) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -338,7 +92,7 @@ private fun App() {
         onDispose { process.removeObserver(observer) }
     }
 
-    // Klick auf "Weiterschauen" im Startbildschirm: direkt fortsetzen (mit nächsten Folgen, falls Serie)
+    // Klick auf "Weiterschauen" im TV-Startbildschirm: direkt fortsetzen
     LaunchedEffect(Incoming.playKey) {
         val key = Incoming.playKey ?: return@LaunchedEffect
         Incoming.playKey = null
@@ -354,815 +108,108 @@ private fun App() {
         val q = Incoming.query ?: return@LaunchedEffect
         Incoming.query = null
         while (stack.size > 1) stack.removeAt(stack.lastIndex)
+        app.tab = Tab.SUCHE
         app.query = q
-        runSearch(app)
+        app.runSearch()
     }
 
-    BackHandler(enabled = stack.size > 1) { stack.removeAt(stack.lastIndex) }
-
-    fun openVideo(v: Video, seriesName: String? = null, seriesId: String? = null, queue: List<Video>? = null) =
-        stack.add(Screen.Detail(v, seriesName, seriesId, queue))
-    /** Aus "Weiterschauen"/"Meine Liste": wenn möglich die aktuelle Fassung aus dem Katalog nehmen. */
-    fun openSaved(v: Video, seriesName: String?, seriesId: String?) {
-        val fresh = app.filtered?.let { f -> (f.films + f.crime + f.docs).firstOrNull { it.stableKey == v.stableKey } }
-        openVideo(fresh ?: v, seriesName, seriesId)
+    val nav = remember {
+        object : Nav {
+            override fun open(tile: Tile) {
+                when (tile) {
+                    is VideoTile -> {
+                        // aus Weiterschauen/Merkliste: wenn möglich die aktuelle Fassung aus dem Katalog
+                        val v = if (tile.saved) app.filtered?.let { f ->
+                            (f.films + f.crime + f.docs).firstOrNull { it.stableKey == tile.video.stableKey }
+                        } ?: tile.video else tile.video
+                        stack.add(Screen.Detail(v, tile.seriesName, tile.seriesId))
+                    }
+                    is SeriesTile -> stack.add(Screen.SeriesView(SeriesState(tile.series)))
+                    is LiveTile -> PlayerActivity.playLive(context, tile.channel)
+                    is AllTile -> tile.spec?.let { browse(it) } ?: tile.tab?.let { tab(it); app.restorePending = true }
+                }
+            }
+            override fun browse(spec: BrowseSpec) { stack.add(Screen.Browse(BrowseState(spec))) }
+            override fun tab(tab: Tab) { app.tab = tab }
+        }
     }
-    fun openSeries(s: SeriesInfo) = stack.add(Screen.SeriesView(SeriesState(s)))
-    fun openAll(c: Category) = stack.add(Screen.Browse(BrowseState(c)))
+
+    // Zurück: Unterseite schließen → zur Startseite → App verlassen
+    BackHandler(enabled = stack.size > 1 || app.tab != Tab.START) {
+        if (stack.size > 1) stack.removeAt(stack.lastIndex) else app.tab = Tab.START
+        app.restorePending = true
+    }
 
     Box(Modifier.fillMaxSize().background(TvColors.Background)) {
         when (val screen = stack.last()) {
-            Screen.Home -> HomeScreen(
-                app, onVideo = { openVideo(it) }, onSeries = ::openSeries, onAll = ::openAll,
-                onSaved = { v, name, id -> openSaved(v, name, id) },
-                onLive = { PlayerActivity.playLive(context, it) },
-                onSearch = { scope.launch { runSearch(app) } },
-                onRetry = { scope.launch { app.start() } },
-                onCheckUpdate = { scope.launch { app.checkUpdateNow() } },
-            )
-            is Screen.Browse -> BrowseScreen(app, screen.state, onVideo = { openVideo(it) }, onSeries = ::openSeries)
+            Screen.Main -> Column(Modifier.fillMaxSize()) {
+                TopBar(app)
+                MainContent(app, nav,
+                    onSearch = { scope.launch { app.runSearch() } },
+                    onRetry = { scope.launch { app.start() } },
+                    onCheckUpdate = { scope.launch { app.checkUpdateNow() } })
+            }
+            is Screen.Browse -> BrowseScreen(app, screen.state, nav)
             is Screen.SeriesView -> SeriesScreen(app, screen.state) { v, queue ->
-                openVideo(v, screen.state.info.name, screen.state.info.id, queue)
+                stack.add(Screen.Detail(v, screen.state.info.name, screen.state.info.id, queue))
             }
-            is Screen.Detail -> key(screen) {
-                DetailScreen(app, screen.video, screen.seriesName, screen.seriesId, screen.queue)
+            is Screen.Detail -> key(screen) { DetailScreen(app, screen.video, screen.seriesName, screen.seriesId, screen.queue) }
+        }
+    }
+    app.update?.let { UpdateDialog(it) { app.update = null } }
+}
+
+/** Menüleiste oben: Rubriken wechseln beim Daraufgehen (wie bei TV-Oberflächen üblich). */
+@Composable
+internal fun TopBar(app: AppState) {
+    Row(Modifier.fillMaxWidth().padding(start = PAGE_PADDING, end = PAGE_PADDING, top = 16.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)).background(TvColors.Accent), contentAlignment = Alignment.Center) {
+            Text("▶", color = Color.White, fontSize = 13.sp)
+        }
+        Spacer(Modifier.width(10.dp))
+        Text("Mediathek", color = TvColors.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.width(28.dp))
+        TabRow(selectedTabIndex = app.tab.ordinal) {
+            Tab.entries.forEach { t ->
+                Tab(
+                    selected = app.tab == t,
+                    onFocus = { app.tab = t },
+                    onClick = { app.tab = t },
+                    colors = TabDefaults.pillIndicatorTabColors(
+                        contentColor = TvColors.TextMuted,
+                        selectedContentColor = TvColors.Text,
+                        focusedContentColor = TvColors.Background,
+                        focusedSelectedContentColor = TvColors.Background,
+                    ),
+                ) {
+                    Text(t.label, fontSize = 14.sp, fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+                }
             }
         }
     }
-    update?.let { UpdateDialog(it) { update = null } }
 }
 
-/** Suche: sofort im Katalog, dann zusätzlich live im gesamten Index. */
-private suspend fun runSearch(app: AppState) {
-    val q = app.query.trim()
-    if (q.length < 2) { app.search = null; return }
+@Composable
+internal fun MainContent(app: AppState, nav: Nav, onSearch: () -> Unit, onRetry: () -> Unit, onCheckUpdate: () -> Unit) {
+    val tab = app.tab
+    if (tab == Tab.SETTINGS) { SettingsPage(app, onCheckUpdate); return }
+    if (tab == Tab.SUCHE) { SearchPage(app, nav, onSearch); return }
+
     val f = app.filtered
-    val needle = norm(q)
-    val local = withContext(Dispatchers.Default) {
-        val videos = f?.let { (it.films + it.crime + it.docs) }.orEmpty()
-            .filter { norm(it.title).contains(needle) || norm(it.topic).contains(needle) }
-            .distinctBy { it.id }.take(60)
-        val series = f?.let { it.series + it.filmSeries + it.docSeries }.orEmpty()
-            .filter { norm(it.name).contains(needle) }.take(40)
-        SearchResult(videos, series, null)
+    if (f == null) {
+        if (app.loading) Hint("Katalog wird geladen …", Modifier.padding(start = PAGE_PADDING, top = 24.dp))
+        else ErrorBox("Katalog konnte nicht geladen werden. Bitte Internetverbindung prüfen.", onRetry)
+        return
     }
-    app.search = local
-    app.home.focusKey = local.series.firstOrNull()?.let { "s-search|${it.id}" } ?: local.videos.firstOrNull()?.let { "v-search|${it.id}" }
-    val live = runCatching { LiveSearch.search(q) }.getOrDefault(emptyList())
-    val known = local.videos.map { norm(it.title) }.toSet()
-    app.search = SearchResult(local.videos, local.series, live.filter { norm(it.title) !in known })
-}
-
-// ============================================================================
-// Startseite
-// ============================================================================
-
-@Composable
-private fun HomeScreen(
-    app: AppState,
-    onVideo: (Video) -> Unit,
-    onSeries: (SeriesInfo) -> Unit,
-    onAll: (Category) -> Unit,
-    onSaved: (Video, String?, String?) -> Unit,
-    onLive: (LiveChannel) -> Unit,
-    onSearch: () -> Unit,
-    onRetry: () -> Unit,
-    onCheckUpdate: () -> Unit,
-) {
-    val f = app.filtered
-    val ui = app.home
-    val firstKey = f?.films?.firstOrNull()?.let { "v-${Category.FILMS}|${it.id}" }
-    LaunchedEffect(firstKey) { if (ui.focusKey == null && firstKey != null) ui.focusKey = firstKey }
-
-    Column(Modifier.fillMaxSize()) {
-        Header(app, onSearch, onCheckUpdate)
-
-        // Vorschau der fokussierten Kachel
-        Box(Modifier.fillMaxWidth().height(140.dp)) {
-            ui.preview?.image?.let { img ->
-                Box(Modifier.align(Alignment.TopEnd).width(250.dp).fillMaxHeight()) {
-                    Picture(img, Modifier.fillMaxSize())
-                    Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(TvColors.Background, Color.Transparent), endX = 260f)))
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, TvColors.Background), startY = 200f)))
-                }
-            }
-            ui.preview?.let { p ->
-                Column(Modifier.padding(horizontal = 48.dp, vertical = 8.dp)) {
-                    Text(p.overline.uppercase(), color = TvColors.Accent, fontSize = 12.sp, letterSpacing = 1.sp, maxLines = 1)
-                    Text(p.title, color = TvColors.Text, fontSize = 22.sp, fontWeight = FontWeight.SemiBold,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(p.meta, color = TvColors.TextMuted, fontSize = 13.sp, maxLines = 1)
-                    Text(p.description, color = TvColors.TextMuted, fontSize = 13.sp, maxLines = 2,
-                        overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.65f))
-                }
-            }
-        }
-
-        if (f == null) {
-            if (app.loading) Hint("Katalog wird geladen …")
-            else ErrorBox("Katalog konnte nicht geladen werden. Bitte Internetverbindung prüfen.", onRetry)
-            return@Column
-        }
-
-        LazyColumn(
-            state = ui.column,
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(top = 4.dp, bottom = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(22.dp),
-        ) {
-            app.search?.let { s ->
-                item(key = "search-series") { SeriesRow("Suche: Serien & Reihen", "search", s.series, null, app, onSeries) }
-                item(key = "search-videos") { VideoRow("Suche: Sendungen", "search", s.videos, null, app, onVideo) }
-                item(key = "search-live") {
-                    if (s.live == null) Column { RowTitle("Suche in allen Mediatheken"); Hint("Sucht …") }
-                    else VideoRow("Weitere Treffer in allen Mediatheken", "live", s.live, null, app, onVideo)
-                }
-            }
-            val resume = Library.continueWatching()
-            if (resume.isNotEmpty()) item(key = "resume") { ResumeRow(resume, app, onSaved) }
-            app.index?.live?.takeIf { it.isNotEmpty() }?.let { live -> item(key = "live") { LiveRow(live, app, onLive) } }
-            if (Library.list.isNotEmpty()) item(key = "mylist") { MyListRow(Library.list, app, onSaved, onSeries) }
-            if (f.newVideos.isNotEmpty()) item(key = "new-videos") {
-                VideoRow("Neu seit gestern", "new", f.newVideos.take(40), null, app, onVideo, count = f.newVideos.size)
-            }
-            if (f.newSeries.isNotEmpty()) item(key = "new-series") {
-                SeriesRow("Neue Folgen", "newsrs", f.newSeries.take(40), null, app, onSeries, count = f.newSeries.size)
-            }
-            for (c in Category.entries) item(key = c.name) {
-                if (c.isSeries) SeriesRow(c.title, c.name, f.series(c).take(ROW_SIZE), f.size(c), app, onSeries) { onAll(c) }
-                else VideoRow(c.title, c.name, f.videos(c).take(ROW_SIZE), f.size(c), app, onVideo) { onAll(c) }
-            }
+    when (tab) {
+        Tab.LIVE -> LivePage(app, nav)
+        Tab.LISTE -> ShelfPage(app, tab, personalShelves(tab), nav,
+            empty = "Noch nichts gemerkt. In den Details „+ Meine Liste“ wählen – angefangene Sendungen erscheinen hier automatisch.")
+        else -> {
+            val base = remember(f, tab) { buildShelves(tab, f) }
+            ShelfPage(app, tab, personalShelves(tab) + base, nav)
         }
     }
 }
-
-private const val ROW_SIZE = 24
-private const val DAY = 24 * 3600L
-private const val CHECK_INTERVAL = 60 * 60 * 1000L        // höchstens stündlich im Netz nachsehen
-private const val UPDATE_INTERVAL = 6 * 60 * 60 * 1000L   // App-Updates alle 6 Stunden prüfen
-private const val SYNC_TICK = 15 * 60 * 1000L             // solange offen: alle 15 Minuten
-private fun nowSec() = System.currentTimeMillis() / 1000
-
-@Composable
-private fun Header(app: AppState, onSearch: () -> Unit, onCheckUpdate: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 24.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text("Mediathek", color = TvColors.Text, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-            app.index?.let {
-                Text("Katalog vom ${dateOf(it.generated)}", color = TvColors.TextMuted, fontSize = 12.sp)
-            }
-        }
-        Spacer(Modifier.weight(1f))
-        Chip(app.updateStatus ?: "Nach Updates suchen", selected = false) { if (app.updateStatus == null) onCheckUpdate() }
-        Spacer(Modifier.width(12.dp))
-        Chip("Land: ${Geo.name(app.country)}", selected = false) { app.nextCountry() }
-        Spacer(Modifier.width(12.dp))
-        VoiceButton { spoken -> app.query = spoken; onSearch() }
-        SearchField(app.query, onChange = { app.query = it; if (it.isBlank()) app.search = null }, onSearch = onSearch)
-    }
-}
-
-/** Spracheingabe für die Suche – nur sichtbar, wenn das Gerät Spracherkennung anbietet. */
-@Composable
-private fun VoiceButton(onResult: (String) -> Unit) {
-    val context = LocalContext.current
-    val available = remember {
-        context.packageManager.queryIntentActivities(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH), 0).isNotEmpty()
-    }
-    if (!available) return
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.takeIf { it.isNotBlank() }?.let(onResult)
-    }
-    Chip("🎤  Sprechen", selected = false) {
-        launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            .putExtra(RecognizerIntent.EXTRA_LANGUAGE, "de-DE")
-            .putExtra(RecognizerIntent.EXTRA_PROMPT, "Was möchtest du sehen?"))
-    }
-    Spacer(Modifier.width(12.dp))
-}
-
-@Composable
-private fun SearchField(value: String, onChange: (String) -> Unit, onSearch: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    Box(
-        Modifier.width(340.dp)
-            .clip(RoundedCornerShape(24.dp))
-            .background(if (focused) TvColors.SurfaceHigh else TvColors.Surface)
-            .border(2.dp, if (focused) TvColors.Accent else Color.Transparent, RoundedCornerShape(24.dp))
-            .padding(horizontal = 18.dp, vertical = 11.dp)
-    ) {
-        if (value.isEmpty()) Text("Filme, Serien, Sendungen suchen …", color = TvColors.TextMuted, fontSize = 16.sp)
-        BasicTextField(
-            value = value,
-            onValueChange = onChange,
-            singleLine = true,
-            textStyle = TextStyle(color = TvColors.Text, fontSize = 16.sp),
-            cursorBrush = SolidColor(TvColors.Accent),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-            keyboardActions = KeyboardActions(onSearch = { onSearch() }),
-            modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused },
-        )
-    }
-}
-
-@Composable
-private fun RowTitle(text: String) =
-    Text(text, color = TvColors.Text, fontSize = 19.sp, fontWeight = FontWeight.SemiBold,
-        modifier = Modifier.padding(start = 48.dp, bottom = 10.dp))
-
-/** Reihe mit Sendungen; [total] != null zeigt am Ende eine "Alle anzeigen"-Kachel. */
-@Composable
-private fun VideoRow(
-    title: String, rowKey: String, videos: List<Video>, total: Int?,
-    app: AppState, onVideo: (Video) -> Unit, count: Int? = total, onAll: () -> Unit = {},
-) {
-    if (videos.isEmpty()) return
-    val ui = app.home
-    Column {
-        RowTitle(if (count != null) "$title  ·  $count" else title)
-        LazyRow(state = ui.row(rowKey), contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(videos.distinctBy { it.id }, key = { it.id }) { v ->
-                val key = "v-$rowKey|${v.id}"
-                VideoCard(v, overlineOf(v), v.title, app.sinceVisit,
-                    Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = v.preview() }) { onVideo(v) }
-            }
-            if (total != null && total > videos.size) item(key = "all") {
-                val key = "all-$rowKey"
-                AllCard(total, title, Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = null }, onAll)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SeriesRow(
-    title: String, rowKey: String, series: List<SeriesInfo>, total: Int?,
-    app: AppState, onSeries: (SeriesInfo) -> Unit, count: Int? = total, onAll: () -> Unit = {},
-) {
-    if (series.isEmpty()) return
-    val ui = app.home
-    Column {
-        RowTitle(if (count != null) "$title  ·  $count" else title)
-        LazyRow(state = ui.row(rowKey), contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(series, key = { it.id }) { s ->
-                val key = "s-$rowKey|${s.id}"
-                SeriesCard(s, app.country, app.sinceVisit,
-                    Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = s.preview(app.country) }) { onSeries(s) }
-            }
-            if (total != null && total > series.size) item(key = "all") {
-                val key = "all-$rowKey"
-                AllCard(total, title, Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = null }, onAll)
-            }
-        }
-    }
-}
-
-/** Angefangene Sendungen und vorgemerkte nächste Folgen. */
-@Composable
-private fun ResumeRow(items: List<Progress>, app: AppState, onOpen: (Video, String?, String?) -> Unit) {
-    val ui = app.home
-    Column {
-        RowTitle("Weiterschauen")
-        LazyRow(state = ui.row("resume"), contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(items, key = { it.key }) { p ->
-                val v = p.video
-                val key = "resume|${p.key}"
-                VideoCard(
-                    v,
-                    overline = listOfNotNull(p.seriesName, v.episode?.label).joinToString(" · ").ifBlank { overlineOf(v) },
-                    title = p.seriesName?.let { Meta.episodeTitle(v.title, it) } ?: v.title,
-                    newSince = Long.MAX_VALUE,
-                    modifier = Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = v.preview() },
-                ) { onOpen(v, p.seriesName, p.seriesId) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun LiveRow(channels: List<LiveChannel>, app: AppState, onLive: (LiveChannel) -> Unit) {
-    val ui = app.home
-    Column {
-        RowTitle("Live-TV  ·  ${channels.size}")
-        LazyRow(state = ui.row("live"), contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(channels, key = { it.name }) { ch ->
-                val key = "live|${ch.name}"
-                TileCard(
-                    channel = ch.channel, badges = emptyList(), overline = "Live-TV", title = ch.name,
-                    modifier = Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) {
-                        ui.focusKey = key
-                        ui.preview = Preview("Live-TV", ch.name, "Jetzt live · ${ch.channel}",
-                            if (ch.srgUrn.isNotBlank()) "Nur in der Schweiz verfügbar." else "")
-                    },
-                    highlight = "LIVE",
-                ) { onLive(ch) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun MyListRow(entries: List<ListEntry>, app: AppState, onOpen: (Video, String?, String?) -> Unit, onSeries: (SeriesInfo) -> Unit) {
-    val ui = app.home
-    Column {
-        RowTitle("Meine Liste  ·  ${entries.size}")
-        LazyRow(state = ui.row("mylist"), contentPadding = PaddingValues(horizontal = 48.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            items(entries, key = { it.key }) { e ->
-                val key = "mylist|${e.key}"
-                val mod = Modifier.width(CARD_WIDTH)
-                e.series?.let { s ->
-                    SeriesCard(s, app.country, app.sinceVisit,
-                        mod.restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = s.preview(app.country) }) { onSeries(s) }
-                }
-                e.video?.let { v ->
-                    VideoCard(v, overlineOf(v), v.title, app.sinceVisit,
-                        mod.restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = v.preview() }) { onOpen(v, null, null) }
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Alle anzeigen: Raster mit Filtern
-// ============================================================================
-
-@Composable
-private fun BrowseScreen(app: AppState, state: BrowseState, onVideo: (Video) -> Unit, onSeries: (SeriesInfo) -> Unit) {
-    val f = app.filtered ?: return
-    val c = state.category
-    val videos = f.videos(c)
-    val series = f.series(c)
-
-    // Filteroptionen aus den vorhandenen Daten
-    val channels = remember(f, c) {
-        (if (c.isSeries) series.map { groupOf(it.channel) } else videos.map { groupOf(it.channel) })
-            .groupingBy { it }.eachCount().entries.sortedByDescending { it.value }.map { it.key }
-    }
-    val genres = remember(f, c) {
-        if (c.isSeries) emptyList()
-        else videos.mapNotNull { it.genre }.groupingBy { it }.eachCount().filter { it.value >= 5 }
-            .entries.sortedByDescending { it.value }.map { it.key }.take(10)
-    }
-
-    val shownVideos = remember(f, c, state.sort, state.channel, state.genre) {
-        videos.filter { (state.channel == null || groupOf(it.channel) == state.channel) && (state.genre == null || it.genre == state.genre) }
-            .let { l -> if (state.sort == Sort.AZ) l.sortedBy { it.title.lowercase() } else l }
-    }
-    val shownSeries = remember(f, c, state.sort, state.channel) {
-        series.filter { state.channel == null || groupOf(it.channel) == state.channel }
-            .let { l -> if (state.sort == Sort.AZ) l.sortedBy { it.name.lowercase() } else l }
-    }
-    val count = if (c.isSeries) shownSeries.size else shownVideos.size
-    LaunchedEffect(state.focusKey == null, count) {
-        if (state.focusKey == null) state.focusKey = shownSeries.firstOrNull()?.id ?: shownVideos.firstOrNull()?.id
-    }
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 28.dp)) {
-        Text(c.title, color = TvColors.Text, fontSize = 28.sp, fontWeight = FontWeight.Bold)
-        Text("$count ${c.unit} verfügbar in ${Geo.name(app.country)}", color = TvColors.TextMuted, fontSize = 14.sp)
-        Spacer(Modifier.height(12.dp))
-
-        FilterRow {
-            Sort.entries.forEach { s -> item { Chip(s.label, state.sort == s) { state.sort = s } } }
-            item { Spacer(Modifier.width(16.dp)) }
-            item { Chip("Alle Sender", state.channel == null) { state.channel = null } }
-            items(channels) { ch -> Chip(ch, state.channel == ch) { state.channel = if (state.channel == ch) null else ch } }
-        }
-        if (genres.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            FilterRow {
-                item { Chip("Alle Genres", state.genre == null) { state.genre = null } }
-                items(genres) { g -> Chip(g, state.genre == g) { state.genre = if (state.genre == g) null else g } }
-            }
-        }
-        Spacer(Modifier.height(14.dp))
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            state = state.grid,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(vertical = 6.dp),
-        ) {
-            if (c.isSeries) gridItems(shownSeries, key = { it.id }) { s ->
-                SeriesCard(s, app.country, app.sinceVisit, Modifier.fillMaxWidth().restoreFocus(s.id, state.focusKey) { state.focusKey = it }) { onSeries(s) }
-            } else gridItems(shownVideos, key = { it.id }) { v ->
-                VideoCard(v, overlineOf(v), v.title, app.sinceVisit, Modifier.fillMaxWidth().restoreFocus(v.id, state.focusKey) { state.focusKey = it }) { onVideo(v) }
-            }
-        }
-    }
-}
-
-@Composable
-private fun FilterRow(content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit) =
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), content = content)
-
-// ============================================================================
-// Serie / Reihe: Folgen
-// ============================================================================
-
-@Composable
-private fun SeriesScreen(app: AppState, state: SeriesState, onVideo: (Video, List<Video>) -> Unit) {
-    val country = app.country
-    val context = LocalContext.current
-    LaunchedEffect(state, country) { if (state.episodes == null) state.load(app.repo, country) }
-    val s = state.info
-    val unit = if (s.kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"
-
-    Column(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 28.dp)) {
-        Text("${kindLabel(s.kind)} · ${s.channel}".uppercase(), color = TvColors.Accent, fontSize = 12.sp, letterSpacing = 1.sp)
-        Text(s.name, color = TvColors.Text, fontSize = 30.sp, fontWeight = FontWeight.Bold)
-        Text(
-            state.episodes?.let { "${it.size} $unit verfügbar in ${Geo.name(country)}" } ?: "$unit werden geladen …",
-            color = TvColors.TextMuted, fontSize = 14.sp,
-        )
-        Spacer(Modifier.height(12.dp))
-
-        // Nächste Folge: angefangene, sonst erste ungesehene
-        val episodic = s.kind != SeriesKind.FILM_SERIES
-        val ordered = state.episodes.orEmpty()
-        val nextUp = ordered.firstOrNull { Library.progressOf(it)?.let { p -> p.position > 0 } == true }
-            ?: ordered.firstOrNull { !Library.isWatched(it) }
-        FilterRow {
-            if (nextUp != null && episodic) item {
-                val label = nextUp.episode?.label ?: "nächste Folge"
-                Chip("▶  $label abspielen", selected = true) {
-                    PlayerActivity.play(context, nextUp, false, queueAfter(ordered, nextUp), s.id, s.name)
-                }
-            }
-            item {
-                val inList = Library.inList(Library.seriesKey(s))
-                Chip(if (inList) "✓  In meiner Liste" else "+  Meine Liste", inList) { Library.toggle(s) }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-
-        if (state.seasons.size > 1) {
-            FilterRow {
-                item { Chip("Alle", state.season == null) { state.season = null } }
-                items(state.seasons) { n -> Chip("Staffel $n", state.season == n) { state.season = n } }
-            }
-            Spacer(Modifier.height(12.dp))
-        }
-
-        if (state.episodes?.isEmpty() == true) Hint("Keine $unit verfügbar.")
-
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            state = state.grid,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(vertical = 6.dp),
-        ) {
-            gridItems(state.visible.distinctBy { it.id }, key = { it.id }) { v ->
-                VideoCard(
-                    video = v,
-                    overline = v.episode?.label ?: listOfNotNull(v.year?.toString(), dateOf(v.timestamp)).first(),
-                    title = Meta.episodeTitle(v.title, s.name),
-                    newSince = app.sinceVisit,
-                    modifier = Modifier.fillMaxWidth().restoreFocus(v.id, state.focusKey) { state.focusKey = it },
-                ) { onVideo(v, if (episodic) queueAfter(ordered, v) else emptyList()) }
-            }
-        }
-    }
-}
-
-/** Folgen nach [v] in Serienreihenfolge – nur echte Folgen (mit Nummer) laufen automatisch weiter. */
-private fun queueAfter(episodes: List<Video>, v: Video): List<Video> {
-    val i = episodes.indexOfFirst { it.id == v.id }
-    return if (i < 0) emptyList() else episodes.drop(i + 1).filter { it.episode != null }.take(30)
-}
-
-// ============================================================================
-// Detailansicht
-// ============================================================================
-
-@Composable
-private fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: String?, initialQueue: List<Video>?) {
-    val context = LocalContext.current
-    var version by remember { mutableStateOf(video) }
-    var subtitles by remember { mutableStateOf(false) }
-    var queue by remember { mutableStateOf(initialQueue) }
-    // Aus "Weiterschauen" geöffnet: folgende Folgen aus der Serie nachladen
-    LaunchedEffect(seriesId) {
-        if (queue == null && seriesId != null && video.episode != null) {
-            val eps = app.repo.episodes(seriesId).mapNotNull { it.forCountry(app.country)?.withCover(video.image) }
-            queue = queueAfter(eps, eps.firstOrNull { it.stableKey == video.stableKey } ?: video)
-        }
-    }
-    val progress = Library.progressOf(video)?.takeIf { it.position > 0 }
-    val watched = Library.isWatched(video)
-    fun play(fromStart: Boolean) = PlayerActivity.play(
-        context, version, subtitles && version.hasSubtitles, queue.orEmpty(), seriesId, seriesName, fromStart)
-    val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { playFocus.requestFocus() } }
-
-    Box(Modifier.fillMaxSize().background(
-        Brush.horizontalGradient(listOf(TvColors.channel(video.channel).copy(alpha = 0.35f), TvColors.Background))
-    )) {
-        video.image?.let { img ->
-            Box(Modifier.align(Alignment.TopEnd).fillMaxWidth(0.55f).fillMaxHeight(0.75f)) {
-                Picture(img.replace("w=480", "w=960").replace("~384x216", "~768x432").replace("layout=384x216", "layout=768x432")
-                    .replace("/480x270", "/960x540").replace("width=480", "width=960"), Modifier.fillMaxSize())
-                Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(listOf(TvColors.Background, Color.Transparent), endX = 500f)))
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, TvColors.Background), startY = 300f)))
-            }
-        }
-        Column(Modifier.fillMaxSize().padding(horizontal = 56.dp, vertical = 40.dp)) {
-            Text((seriesName ?: video.topic).uppercase(), color = TvColors.Accent, fontSize = 13.sp, letterSpacing = 1.sp)
-            Text(
-                seriesName?.let { Meta.episodeTitle(video.title, it) } ?: video.title,
-                color = TvColors.Text, fontSize = 32.sp, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis,
-            )
-            Spacer(Modifier.height(16.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(26.dp)) {
-                video.episode?.let { Info("Folge", it.label) }
-                video.genre?.let { Info("Genre", it) }
-                video.year?.let { Info("Jahr", it.toString()) }
-                Info("Dauer", "${video.minutes} Min")
-                Info("Sender", video.channel)
-                Info("Ausgestrahlt", dateOf(video.timestamp))
-            }
-            Spacer(Modifier.height(16.dp))
-            Text(video.description, color = TvColors.Text.copy(alpha = 0.85f), fontSize = 15.sp, lineHeight = 22.sp,
-                maxLines = 7, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.68f))
-            Spacer(Modifier.height(24.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { play(fromStart = false) }, modifier = Modifier.focusRequester(playFocus)) {
-                    Text(if (progress != null) "▶  Fortsetzen (${clock(progress.position)})" else "▶  Abspielen", fontSize = 17.sp)
-                }
-                if (progress != null) Chip("↺  Von vorne", false) { play(fromStart = true) }
-                if (version.hasSubtitles) Chip(if (subtitles) "Untertitel: An" else "Untertitel: Aus", subtitles) { subtitles = !subtitles }
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                val inList = Library.inList(video.stableKey)
-                Chip(if (inList) "✓  In meiner Liste" else "+  Meine Liste", inList) { Library.toggle(video) }
-                Chip(if (watched) "✓  Gesehen" else "Als gesehen markieren", watched) { Library.markWatched(video, !watched) }
-                if (progress != null) Chip("Aus „Weiterschauen“ entfernen", false) { Library.removeProgress(video) }
-            }
-            queue?.firstOrNull()?.let { next ->
-                Spacer(Modifier.height(14.dp))
-                Text("Danach automatisch: ${next.episode?.label?.let { "$it · " }.orEmpty()}${seriesName?.let { Meta.episodeTitle(next.title, it) } ?: next.title}",
-                    color = TvColors.TextMuted, fontSize = 13.sp)
-            }
-            if (video.versions.size > 1) {
-                Spacer(Modifier.height(20.dp))
-                Text("Sprache / Fassung", color = TvColors.TextMuted, fontSize = 13.sp)
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    video.versions.forEach { v -> Chip(v.language, v.id == version.id) { version = v } }
-                }
-            }
-            if (!video.geoKnown) {
-                Spacer(Modifier.height(16.dp))
-                Text("Hinweis: Treffer aus der Live-Suche – die Ländersperre ist unbekannt.", color = TvColors.TextMuted, fontSize = 13.sp)
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Bausteine
-// ============================================================================
-
-private val CARD_WIDTH = 232.dp
-
-@Composable
-private fun VideoCard(video: Video, overline: String, title: String, newSince: Long, modifier: Modifier, onClick: () -> Unit) {
-    val watched = Library.isWatched(video)
-    val progress = Library.progressOf(video)?.takeIf { it.position > 0 }?.fraction
-    val badges = buildList {
-        if (watched) add("✓ Gesehen")
-        if (video.hasSubtitles) add("UT")
-        if (video.variants.isNotEmpty()) add("${video.versions.size} Fassungen")
-        add("${video.minutes} Min")
-    }
-    val isNew = video.firstSeen > 0 && video.firstSeen > newSince
-    TileCard(video.channel, badges, overline, title, modifier, if (isNew && !watched) "NEU" else null, progress, video.image, onClick)
-}
-
-@Composable
-private fun SeriesCard(s: SeriesInfo, country: String, newSince: Long, modifier: Modifier, onClick: () -> Unit) {
-    val films = s.kind == SeriesKind.FILM_SERIES
-    val isNew = s.newestEpisode > 0 && s.newestEpisode > newSince
-    TileCard(
-        s.channel,
-        listOf("${s.countIn(country)} " + if (films) "Filme" else "Folgen"),
-        "${kindLabel(s.kind)}${if (s.crime) " · Krimi" else ""}",
-        s.name, modifier, image = s.image,
-        highlight = if (isNew) (if (films) "NEUER FILM" else "NEUE FOLGEN") else null,
-        onClick = onClick,
-    )
-}
-
-@Composable
-private fun AllCard(total: Int, title: String, modifier: Modifier, onClick: () -> Unit) {
-    val shape = RoundedCornerShape(12.dp)
-    Card(
-        onClick = onClick, modifier = modifier,
-        shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = TvColors.SurfaceHigh, focusedContainerColor = TvColors.Accent),
-        scale = CardDefaults.scale(focusedScale = 1.06f),
-    ) {
-        Column(Modifier.fillMaxWidth().height(CARD_IMAGE + 62.dp).padding(16.dp), verticalArrangement = Arrangement.Center) {
-            Text("Alle anzeigen  →", color = TvColors.Text, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
-            Text("$total $title", color = TvColors.Text.copy(alpha = 0.8f), fontSize = 14.sp)
-        }
-    }
-}
-
-private val CARD_IMAGE = 128.dp
-
-@Composable
-private fun TileCard(
-    channel: String, badges: List<String>, overline: String, title: String, modifier: Modifier,
-    highlight: String? = null, progress: Float? = null, image: String? = null, onClick: () -> Unit,
-) {
-    val shape = RoundedCornerShape(12.dp)
-    Card(
-        onClick = onClick, modifier = modifier,
-        shape = CardDefaults.shape(shape),
-        colors = CardDefaults.colors(containerColor = TvColors.Surface, focusedContainerColor = TvColors.SurfaceHigh),
-        scale = CardDefaults.scale(focusedScale = 1.06f),
-        border = CardDefaults.border(focusedBorder = Border(BorderStroke(3.dp, TvColors.Accent), shape = shape)),
-    ) {
-        Box(Modifier.fillMaxWidth().height(CARD_IMAGE)
-            .background(Brush.linearGradient(listOf(TvColors.channel(channel), TvColors.Surface)))) {
-            if (image != null) {
-                Picture(image, Modifier.fillMaxSize())
-                // dunkle Ränder, damit Sender und Abzeichen auf jedem Bild lesbar bleiben
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                    0f to Color.Black.copy(alpha = 0.55f), 0.3f to Color.Transparent, 0.7f to Color.Transparent, 1f to Color.Black.copy(alpha = 0.6f))))
-            }
-            Text(channel, color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp, fontWeight = FontWeight.Bold,
-                modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
-            highlight?.let {
-                Text(it, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(5.dp))
-                        .background(TvColors.New).padding(horizontal = 6.dp, vertical = 2.dp))
-            }
-            Row(Modifier.align(Alignment.BottomEnd).padding(bottom = if (progress != null) 10.dp else 6.dp, end = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                badges.forEach { Badge(it) }
-            }
-            progress?.let { f ->   // Fortschrittsbalken
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(4.dp).background(Color.Black.copy(alpha = 0.5f)))
-                Box(Modifier.align(Alignment.BottomStart).fillMaxWidth(f.coerceAtLeast(0.03f)).height(4.dp).background(TvColors.Accent))
-            }
-        }
-        Column(Modifier.padding(horizontal = 10.dp, vertical = 8.dp)) {
-            Text(overline, color = TvColors.TextMuted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(title, color = TvColors.Text, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.height(38.dp))
-        }
-    }
-}
-
-@Composable
-private fun Badge(text: String) = Text(
-    text, color = Color.White, fontSize = 11.sp,
-    modifier = Modifier.clip(RoundedCornerShape(5.dp)).background(Color.Black.copy(alpha = 0.55f))
-        .padding(horizontal = 5.dp, vertical = 1.dp),
-)
-
-@Composable
-private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        colors = ButtonDefaults.colors(
-            containerColor = if (selected) TvColors.Accent else TvColors.SurfaceHigh,
-            contentColor = TvColors.Text,
-        ),
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 7.dp),
-    ) { Text(text, fontSize = 14.sp) }
-}
-
-@Composable
-private fun Info(label: String, value: String) = Column {
-    Text(label, color = TvColors.TextMuted, fontSize = 12.sp)
-    Text(value, color = TvColors.Text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
-}
-
-@Composable
-private fun Hint(text: String) = Text(text, color = TvColors.TextMuted, fontSize = 14.sp, modifier = Modifier.padding(start = 48.dp))
-
-@Composable
-private fun ErrorBox(message: String, onRetry: () -> Unit) {
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { focus.requestFocus() } }
-    Column(Modifier.padding(48.dp)) {
-        Text(message, color = TvColors.Text, fontSize = 17.sp)
-        Spacer(Modifier.height(14.dp))
-        Button(onClick = onRetry, modifier = Modifier.focusRequester(focus)) { Text("Erneut versuchen") }
-    }
-}
-
-/**
- * Merkt sich die fokussierte Kachel und holt den Fokus zurück, wenn man von einer
- * Unterseite zurückkehrt – sonst "zeigt" die Fernbedienung ins Leere.
- */
-@Composable
-private fun Modifier.restoreFocus(key: String, target: String?, onFocused: (String) -> Unit): Modifier {
-    val requester = remember { FocusRequester() }
-    val isTarget = key == target
-    LaunchedEffect(isTarget) { if (isTarget) { withFrameNanos { }; runCatching { requester.requestFocus() } } }
-    return this.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(key) }
-}
-
-@Composable
-private fun UpdateDialog(update: Update, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var busy by remember { mutableStateOf(false) }
-    var failed by remember { mutableStateOf(false) }
-    val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { focus.requestFocus() } }
-
-    Dialog(onDismissRequest = { if (!busy) onDismiss() }) {
-        Column(Modifier.width(500.dp).clip(RoundedCornerShape(18.dp)).background(TvColors.Surface).padding(32.dp)) {
-            Text("Update verfügbar", color = TvColors.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                if (failed) "Download fehlgeschlagen. Bitte später erneut versuchen."
-                else "Version ${update.versionName} ist da (installiert: ${BuildConfig.VERSION_NAME}).",
-                color = TvColors.TextMuted, fontSize = 16.sp,
-            )
-            Spacer(Modifier.height(24.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Button(
-                    onClick = { busy = true; failed = false; scope.launch { failed = !Updater.downloadAndInstall(context, update); busy = false } },
-                    enabled = !busy, modifier = Modifier.focusRequester(focus),
-                ) { Text(if (busy) "Wird geladen …" else "Jetzt installieren", fontSize = 16.sp) }
-                Button(onClick = onDismiss, enabled = !busy, colors = ButtonDefaults.colors(containerColor = TvColors.SurfaceHigh)) {
-                    Text("Später", fontSize = 16.sp)
-                }
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Texte & Formatierung
-// ============================================================================
-
-private fun kindLabel(k: SeriesKind) = when (k) {
-    SeriesKind.SERIES -> "Serie"; SeriesKind.FILM_SERIES -> "Film-Reihe"; SeriesKind.DOC_SERIES -> "Doku-Reihe"
-}
-
-/** Bei Reihen (Tatort …) der Reihenname, bei Sammel-Rubriken Genre und Jahr. */
-private fun overlineOf(v: Video): String =
-    (if (Meta.isRubric(v.topic)) listOfNotNull(v.genre, v.year?.toString()) else listOfNotNull(v.topic, v.year?.toString()))
-        .joinToString(" · ").ifBlank { v.topic }
-
-private fun Video.preview() = Preview(topic, title, metaLine(this), description, image)
-
-private fun SeriesInfo.preview(country: String) = Preview(
-    "${kindLabel(kind)} · $channel", name,
-    "${countIn(country)} " + (if (kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"), description, image,
-)
-
-/** Folgen ohne eigenes Bild bekommen das Titelbild der Serie. */
-private fun Video.withCover(cover: String?) = if (image == null && cover != null) copy(image = cover) else this
-
-/** Bild aus dem Netz; bis es geladen ist, bleibt der Hintergrund (Senderfarbe) sichtbar. */
-@Composable
-private fun Picture(url: String, modifier: Modifier) {
-    val context = LocalContext.current
-    AsyncImage(
-        model = remember(url) { ImageRequest.Builder(context).data(url).crossfade(250).build() },
-        contentDescription = null,
-        contentScale = ContentScale.Crop,
-        modifier = modifier,
-    )
-}
-
-private fun metaLine(v: Video): String = buildList {
-    v.genre?.let { add(it) }
-    v.year?.let { add(it.toString()) }
-    add("${v.minutes} Min")
-    add(v.channel)
-    add(dateOf(v.timestamp))
-    if (v.hasSubtitles) add("Untertitel")
-    if (v.variants.isNotEmpty()) add("${v.versions.size} Fassungen")
-}.joinToString("  ·  ")
-
-private fun clock(ms: Long): String {
-    val s = ms / 1000
-    return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) else "%d:%02d".format(s / 60, s % 60)
-}
-
-private fun dateOf(ts: Long): String = SimpleDateFormat("dd.MM.yyyy", Locale.GERMANY).format(Date(ts * 1000))
-
-private fun norm(s: String) = s.lowercase().replace(Regex("[^a-z0-9äöüß]"), "")

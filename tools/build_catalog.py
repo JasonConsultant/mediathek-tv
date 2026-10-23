@@ -446,7 +446,7 @@ def write_gz(path, obj):
 # ---------------------------------------------------------------- Vorschaubilder
 
 IMAGE_WIDTH = 480
-MAX_NEW_IMAGES = 7000          # pro Lauf; der Rest folgt in den nächsten Läufen
+MAX_NEW_IMAGES = 12000         # pro Lauf (~10 Min.); der Rest folgt in den nächsten Läufen
 UA = {"User-Agent": "Mozilla/5.0 (MediathekTV-Katalog)"}
 OG_IMAGE = re.compile(rb'<meta[^>]+property="og:image"[^>]+content="([^"]+)"|<meta[^>]+content="([^"]+)"[^>]+property="og:image"')
 # Platzhalter der Sender aussortieren ("teaser-mit-logo" beim ZDF ist dagegen ein echtes Bild)
@@ -500,13 +500,19 @@ def load_image_cache(prev_dir):
 def assign_images(cat, cache):
     """Bilder für Filme/Krimis/Dokus und je ein Titelbild pro Serie. Bekanntes aus dem Cache,
     Neues wird parallel gesucht (begrenzt pro Lauf). Cache-Eintrag: [bild_oder_leer, geprüft_am]."""
+    # Reihenfolge = Priorität: erst ein Titelbild je Serie, dann Filme/Krimis/Dokus, dann Ersatzkandidaten
     targets = {}                                   # Schlüssel -> Website
+    groups = ("series", "filmSeries", "docSeries")
+    for group in groups:
+        for s in cat[group]:
+            e = max(s["e"], key=lambda e: e["ts"])
+            if e.get("_w"): targets.setdefault(fs_key(e), e["_w"])
     for key in ("films", "crime", "docs"):
         for o in cat[key]:
             if o.get("_w"): targets.setdefault(fs_key(o), o["_w"])
-    for group in ("series", "filmSeries", "docSeries"):
+    for group in groups:
         for s in cat[group]:
-            for e in sorted(s["e"], key=lambda e: -e["ts"])[:3]:   # neueste Folgen als Titelbild-Kandidaten
+            for e in sorted(s["e"], key=lambda e: -e["ts"])[1:3]:   # weitere neueste Folgen als Ersatz
                 if e.get("_w"): targets.setdefault(fs_key(e), e["_w"])
 
     todo = [k for k in targets if k not in cache or (not cache[k][0] and NOW - cache[k][1] > 7 * 86400)]
