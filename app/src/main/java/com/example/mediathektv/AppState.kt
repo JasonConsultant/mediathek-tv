@@ -7,6 +7,7 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
@@ -180,7 +181,9 @@ class AppState(context: Context) {
     var tab by mutableStateOf(Tab.START)
     val pages = Tab.entries.associateWith { PageUi() }
     /** Fokus nur dann zurückholen, wenn man von einer Unterseite zurückkommt (nicht beim Blättern durch die Rubriken). */
-    var restorePending by mutableStateOf(true)
+    /** Zähler: jede Erhöhung holt den Fokus auf die gemerkte Kachel der aktuellen Seite zurück. */
+    var restoreTick by mutableIntStateOf(0)
+    fun restoreFocus() { restoreTick++ }
 
     // ---------- Laden & automatisches Nachladen ----------
     private val mutex = Mutex()

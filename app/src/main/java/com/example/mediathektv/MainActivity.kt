@@ -140,7 +140,7 @@ private fun App() {
                         PlayerActivity.playLive(context, tile.channel, channels,
                             channels.filter { app.playableHere(it) }.map { it.name }.toSet())
                     }
-                    is AllTile -> tile.spec?.let { browse(it) } ?: tile.tab?.let { tab(it); app.restorePending = true }
+                    is AllTile -> tile.spec?.let { browse(it) } ?: tile.tab?.let { tab(it); app.restoreFocus() }
                 }
             }
             override fun browse(spec: BrowseSpec) { stack.add(Screen.Browse(BrowseState(spec))) }
@@ -151,7 +151,7 @@ private fun App() {
     // Zurück: Unterseite schließen → zur Startseite → App verlassen
     BackHandler(enabled = stack.size > 1 || app.tab != Tab.START) {
         if (stack.size > 1) stack.removeAt(stack.lastIndex) else app.tab = Tab.START
-        app.restorePending = true
+        app.restoreFocus()
     }
 
     Box(Modifier.fillMaxSize().background(TvColors.Background)) {
@@ -197,23 +197,14 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
             Column(
                 Modifier.fillMaxHeight().background(
                     Brush.horizontalGradient(listOf(TvColors.Surface, TvColors.Surface.copy(alpha = if (open == DrawerValue.Open) 0.97f else 0.0f)))
-                ).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(0.dp),
+                ).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.Center,
             ) {
-                Row(Modifier.padding(start = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(TvColors.Accent), contentAlignment = Alignment.Center) {
-                        Text("▶", color = Color.White, fontSize = 14.sp)
-                    }
-                    if (open == DrawerValue.Open) {
-                        Spacer(Modifier.width(10.dp))
-                        Text("Mediathek", color = TvColors.Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
                 Tab.entries.forEach { t ->
                     NavigationDrawerItem(
                         selected = app.tab == t,
-                        // OK: Rubrik öffnen – Menü schließt sich, der Fokus springt auf die Seite
-                        onClick = { app.tab = t; focus.moveFocus(FocusDirection.Right) },
+                        // OK: Rubrik öffnen – der Fokus springt auf die gemerkte Kachel der Seite, das Menü schließt sich
+                        onClick = { app.tab = t; app.restoreFocus(); focus.moveFocus(FocusDirection.Right) },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
                         modifier = Modifier.onFocusChanged { if (it.isFocused) app.tab = t },
                         colors = NavigationDrawerItemDefaults.colors(

@@ -262,13 +262,13 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
  * sonst "zeigt" die Fernbedienung nach dem Zurückkehren ins Leere.
  */
 @Composable
-fun Modifier.restoreFocus(key: String, target: () -> String?, enabled: () -> Boolean = { true }, onRestored: () -> Unit = {}, onFocused: (String) -> Unit): Modifier {
+fun Modifier.restoreFocus(key: String, target: () -> String?, tick: Int = 0, onFocused: (String) -> Unit): Modifier {
     val requester = remember { FocusRequester() }
-    // Nur beim Erscheinen prüfen und den Zustand nicht in der Komposition lesen – sonst würde jede
-    // Fokus-Bewegung alle sichtbaren Kacheln neu aufbauen (das machte das Blättern träge).
-    LaunchedEffect(Unit) {
+    // Beim Erscheinen und bei jeder Anforderung ([tick]) prüfen; der gemerkte Schlüssel wird bewusst nicht
+    // in der Komposition gelesen – sonst baute jede Fokus-Bewegung alle sichtbaren Kacheln neu auf (träge).
+    LaunchedEffect(tick) {
         withFrameNanos { }
-        if (enabled() && key == target()) { runCatching { requester.requestFocus() }; onRestored() }
+        if (key == target()) runCatching { requester.requestFocus() }
     }
     return this.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(key) }
 }

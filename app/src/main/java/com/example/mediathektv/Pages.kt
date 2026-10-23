@@ -247,8 +247,7 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
                 val key = "${shelf.key}|${tile.key}"
                 TileView(
                     tile, app,
-                    Modifier.width(CARD_WIDTH).restoreFocus(key, { ui.focusKey }, enabled = { app.restorePending },
-                        onRestored = { app.restorePending = false }) {
+                    Modifier.width(CARD_WIDTH).restoreFocus(key, { ui.focusKey }, app.restoreTick) {
                         ui.focusKey = key
                         ui.preview = tile.preview(app.country) ?: ui.preview
                     },
@@ -310,8 +309,7 @@ fun TvPage(app: AppState, nav: Nav) {
                             focusedContentColor = TvColors.Background,
                             selectedContentColor = TvColors.Text,
                         ),
-                        modifier = Modifier.restoreFocus(key, { ui.focusKey }, enabled = { app.restorePending },
-                            onRestored = { app.restorePending = false }) { ui.focusKey = it; ui.selectedChannel = ch },
+                        modifier = Modifier.restoreFocus(key, { ui.focusKey }, app.restoreTick) { ui.focusKey = it; ui.selectedChannel = ch },
                     )
                 }
             }
