@@ -50,6 +50,10 @@ den Reihen, deren Kategorie bekannt ist (ZDF, ARTE, 3sat), und ordnet damit die 
 SRF, ORF). Bei Tests lag er in rund 95 % der Fälle richtig. Unsichere Fälle lässt er weg, Nachrichten,
 Talk, Sport, Kochen und Kinderprogramm werden aussortiert.
 
+**Korrekturen:** Landet eine Reihe in der falschen Gruppe, trägt man sie in `tools/corrections.json` ein
+(`serie`, `filmreihe`, `dokureihe` oder `ausblenden`). Direkt auf GitHub bearbeiten genügt, der Katalog
+wird danach automatisch neu gebaut und ist nach wenigen Minuten in der App.
+
 **Genre und Jahr** stammen aus Titel und Beschreibung und erscheinen nur, wenn sie dort stehen.
 
 ## Bedienung (Fernbedienung)

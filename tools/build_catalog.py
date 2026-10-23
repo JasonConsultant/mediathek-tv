@@ -297,9 +297,29 @@ def train_classifier(rows):
         return float(model.predict_proba(vec.transform([text]))[0, 1])
     return fiction_probability
 
+# ---------------------------------------------------------------- Korrekturliste
+
+CORRECTION_KINDS = {"serie", "filmreihe", "dokureihe", "ausblenden"}
+
+def load_corrections(path):
+    """tools/corrections.json: {"serie": [...], "filmreihe": [...], "dokureihe": [...], "ausblenden": [...]}
+    Namen wie in der App angezeigt (ohne "Staffel n"). Groß-/Kleinschreibung egal."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        data = json.load(f)
+    out = {}
+    for kind, names in data.items():
+        if kind in CORRECTION_KINDS:
+            for n in names:
+                out[STAFFEL_SUFFIX.sub("", n).strip().lower()] = kind
+    print(f"Korrekturliste: {len(out)} Einträge", file=sys.stderr)
+    return out
+
 # ---------------------------------------------------------------- Katalog
 
-def build(rows):
+def build(rows, corrections=None):
+    corrections = corrections or {}
     rows = prepare(rows)
     print(f"Nach Vorfilter: {len(rows)} Einträge", file=sys.stderr)
     fiction_probability = train_classifier(rows)
@@ -320,6 +340,19 @@ def build(rows):
         if not topic:
             continue
         long_items = [r for r in items if r["secs"] >= 60 * 60]
+
+        # Korrekturliste geht vor allen automatischen Regeln
+        forced = corrections.get(STAFFEL_SUFFIX.sub("", topic).strip().lower())
+        if forced == "ausblenden":
+            continue
+        if forced:
+            crime_like = bool(CRIME_TOPIC.match(topic)) or \
+                sum(bool(CRIME_WORDS.search(r["desc"])) for r in items) / len(items) >= 0.5
+            {"serie": series, "filmreihe": film_series, "dokureihe": doc_series}[forced].append(
+                (topic, items, crime_like and forced != "dokureihe"))
+            if forced == "filmreihe" and crime_like:
+                crime += long_items
+            continue
 
         if topic in FILM_TOPICS:
             for r in long_items:
@@ -530,13 +563,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", help="lokale Filmliste-akt.xz (sonst Download)")
     ap.add_argument("--previous", help="Ordner mit dem vorherigen Katalog (für 'Neu')")
+    ap.add_argument("--corrections", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "corrections.json"),
+                    help="Korrekturliste (Standard: tools/corrections.json)")
     ap.add_argument("--out", default="catalog")
     a = ap.parse_args()
     t = time.time()
     rows = load(a.input)
     print(f"Filmliste: {len(rows)} Einträge", file=sys.stderr)
     live = live_channels(rows)
-    cat = build(rows)
+    cat = build(rows, load_corrections(a.corrections))
     cat["live"] = live
     assign_first_seen(cat, load_previous(a.previous))
     size, eps = write(cat, a.out)

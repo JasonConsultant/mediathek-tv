@@ -1,0 +1,13 @@
+{
+  "_hinweis": "Korrekturen für die automatische Einteilung. Namen so, wie sie in der App erscheinen (ohne 'Staffel n'). Nach dem Speichern auf GitHub wird der Katalog automatisch neu gebaut.",
+  "serie": [
+    "Heiter bis tödlich - Hauptstadtrevier"
+  ],
+  "filmreihe": [],
+  "dokureihe": [],
+  "ausblenden": [
+    "Bounce",
+    "Kochs anders",
+    "Echtes Leben"
+  ]
+}
