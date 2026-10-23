@@ -60,6 +60,9 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.tv:tv-material:1.0.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.6")  // Rückkehr in die App erkennen
+    implementation("androidx.lifecycle:lifecycle-process:2.8.6")          // App im Vorder-/Hintergrund (für "Neu")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")                // Nachladen im Hintergrund
 
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.11.0")   // nur der Streaming-JsonReader

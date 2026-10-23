@@ -10,6 +10,7 @@ object TvColors {
     val Accent = Color(0xFF2E7CF6)
     val Text = Color(0xFFF2F5FA)
     val TextMuted = Color(0xFF9AA7C2)
+    val New = Color(0xFFE53950)        // NEU-Abzeichen
 
     /** Farbverlauf je Sender als Kachel-Hintergrund (keine Logos). */
     fun channel(ch: String): Color = when {
