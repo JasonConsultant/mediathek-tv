@@ -78,6 +78,11 @@ Neuzugänge, höchstens 7.000 pro Lauf.
 | Player | OK | Pause / weiter |
 | Player | Links / Rechts | 10 Sekunden zurück / vor |
 | Player | Untertitel-Taste | Untertitel an / aus |
+| Live-TV | Hoch / Runter oder Programm + / − | Sender wechseln (nur hier empfangbare) |
+| Live-TV | OK / Info | Infoleiste: Jetzt und Danach (Programmführer) |
+
+**Programmführer (EPG):** `tools/build_epg.py` holt alle 3 Stunden die frei verfügbaren XMLTV-Listen von
+epgshare01.online (Deutschland + Schweiz) und legt `epg.json.gz` in den Branch `catalog`.
 
 ## Workflows
 | Workflow | Wann | Was |

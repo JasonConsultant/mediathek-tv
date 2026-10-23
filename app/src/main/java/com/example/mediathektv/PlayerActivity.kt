@@ -35,11 +35,14 @@ object Playback {
     var seriesId: String? = null
     var seriesName: String? = null
     var live: LiveChannel? = null
+    var channels: List<LiveChannel> = emptyList()   // Senderliste zum Umschalten (Reihenfolge wie in der App)
+    var playable: Set<String> = emptySet()          // Sender, die hier empfangbar sind
 }
 
 /**
  * Vollbild-Player für Sendungen und Live-TV.
  * Fernbedienung (Bedienleiste ausgeblendet): OK = Pause/Weiter, Links/Rechts = 10 s, Untertitel-Taste = an/aus.
+ * Live-TV: Hoch/Runter oder Programm +/− = Sender wechseln, OK = Infoleiste mit Jetzt/Danach.
  * Sendungen: setzt an der gespeicherten Stelle fort, speichert den Fortschritt und startet am Ende
  * nach 10 Sekunden die nächste Folge (OK = sofort, Zurück = beenden).
  */
@@ -47,6 +50,7 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var player: ExoPlayer
     private lateinit var view: PlayerView
     private lateinit var overlay: TextView
+    private lateinit var banner: TextView
     private val handler = Handler(Looper.getMainLooper())
 
     private var video: Video? = null
@@ -55,6 +59,7 @@ class PlayerActivity : ComponentActivity() {
     private var hasSubtitles = false
     private var subtitlesOn = false
     private var countdown = 0
+    private val hideBanner = Runnable { banner.visibility = TextView.GONE }
 
     private val saveTicker = object : Runnable {
         override fun run() { saveProgress(); handler.postDelayed(this, 10_000) }
@@ -89,6 +94,18 @@ class PlayerActivity : ComponentActivity() {
         overlayParams.gravity = Gravity.BOTTOM or Gravity.END
         overlayParams.setMargins(0, 0, 64, 96)
         root.addView(overlay, overlayParams)
+        banner = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 17f
+            setLineSpacing(6f, 1f)
+            setPadding(40, 28, 40, 28)
+            background = GradientDrawable().apply { cornerRadius = 24f; setColor(0xE60B1220.toInt()) }
+            visibility = TextView.GONE
+        }
+        val bannerParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        bannerParams.gravity = Gravity.BOTTOM
+        bannerParams.setMargins(64, 0, 64, 56)
+        root.addView(banner, bannerParams)
         setContentView(root)
 
         player.addListener(object : Player.Listener {
@@ -181,16 +198,67 @@ class PlayerActivity : ComponentActivity() {
 
     private fun startLive(ch: LiveChannel) {
         live = ch
+        Playback.live = ch
         video = null
+        triedAlternative = false
         view.setShowSubtitleButton(false)
+        view.hideController()
+        showBanner()
         if (ch.srgUrn.isNotBlank()) {
-            toast("${ch.name} wird geladen …")
+            player.stop()
             lifecycleScope.launch {
                 runCatching { SrgResolver.resolve(ch.srgUrn) }
-                    .onSuccess { playStream(it, ch.name) }
-                    .onFailure { toast(it.message ?: "Livestream nicht verfügbar."); finish() }
+                    .onSuccess { if (live == ch) playStream(it, ch.name) }
+                    .onFailure { if (live == ch) liveFailed(ch) }
             }
         } else playStream(Stream(ch.url), ch.name)
+    }
+
+    /** Zum nächsten (+1) oder vorherigen (−1) Sender, der hier empfangbar ist. */
+    private fun zap(step: Int) {
+        val list = Playback.channels
+        val current = live ?: return
+        if (list.size < 2) return
+        var i = list.indexOfFirst { it.name == current.name }.coerceAtLeast(0)
+        repeat(list.size) {
+            i = (i + step + list.size) % list.size
+            val ch = list[i]
+            if (Playback.playable.isEmpty() || ch.name in Playback.playable) { startLive(ch); return }
+        }
+    }
+
+    /** Infoleiste unten: Nummer, Sender, was gerade läuft und was danach kommt. */
+    private fun showBanner(note: String? = null) {
+        val ch = live ?: return
+        val number = Playback.channels.indexOfFirst { it.name == ch.name }.takeIf { it >= 0 }?.let { "%02d  ".format(it + 1) }.orEmpty()
+        val t = nowSec()
+        val now = Epg.now(ch.name, t)
+        val next = Epg.upcoming(ch.name, 1, t).firstOrNull()
+        banner.text = buildString {
+            append(number).append(ch.name).append("   ").append(hhmm(t))
+            if (now != null) {
+                append("\nJetzt  ").append(now.times).append("  ").append(now.title)
+                if (now.subtitle.isNotBlank()) append(" – ").append(now.subtitle)
+                append("  (").append((now.progress(t) * 100).toInt()).append(" %)")
+            }
+            if (next != null) append("\nDanach  ").append(next.times).append("  ").append(next.title)
+            if (note != null) append("\n").append(note)
+            if (Playback.channels.size > 1) append("\n▲▼ Sender wechseln")
+        }
+        banner.visibility = TextView.VISIBLE
+        handler.removeCallbacks(hideBanner)
+        handler.postDelayed(hideBanner, if (note != null) 8000 else 5000)
+    }
+
+    /** Sender lässt sich nicht abspielen: beim Umschalten weiter zappen lassen, sonst schließen. */
+    private fun liveFailed(ch: LiveChannel) {
+        if (Playback.channels.size > 1) {
+            player.stop()
+            showBanner("⚠ ${ch.name} ist in deinem Land gerade nicht verfügbar – anderen Sender wählen.")
+        } else {
+            toast("${ch.name} ist in deinem Land gerade nicht verfügbar.")
+            finish()
+        }
     }
 
     private fun playStream(stream: Stream, title: String) {
@@ -211,8 +279,8 @@ class PlayerActivity : ComponentActivity() {
             playStream(Stream(ch.altUrl), ch.name)
             return
         }
-        toast(if (ch != null) "${ch.name} ist in deinem Land gerade nicht verfügbar."
-              else "Video kann nicht abgespielt werden (evtl. nicht mehr verfügbar oder nur im Inland abrufbar).")
+        if (ch != null) return liveFailed(ch)
+        toast("Video kann nicht abgespielt werden (evtl. nicht mehr verfügbar oder nur im Inland abrufbar).")
         finish()
     }
 
@@ -236,6 +304,22 @@ class PlayerActivity : ComponentActivity() {
                 applySubtitles()
                 toast(if (subtitlesOn) "Untertitel an" else "Untertitel aus")
                 return true
+            }
+            if (live != null) when (event.keyCode) {
+                KeyEvent.KEYCODE_CHANNEL_UP -> { zap(-1); return true }
+                KeyEvent.KEYCODE_CHANNEL_DOWN -> { zap(1); return true }
+                KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showBanner(); return true }
+            }
+            if (live != null && !view.isControllerFullyVisible) {
+                when (event.keyCode) {
+                    KeyEvent.KEYCODE_DPAD_UP -> { zap(-1); return true }
+                    KeyEvent.KEYCODE_DPAD_DOWN -> { zap(1); return true }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (banner.visibility == TextView.VISIBLE) { hideBanner.run(); view.showController() } else showBanner()
+                        return true
+                    }
+                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { showBanner(); return true }
+                }
             }
             if (!view.isControllerFullyVisible) {
                 when (event.keyCode) {
@@ -275,7 +359,7 @@ class PlayerActivity : ComponentActivity() {
         super.onDestroy()
         handler.removeCallbacksAndMessages(null)
         if (::player.isInitialized) player.release()
-        if (isFinishing) Playback.live = null
+        if (isFinishing) { Playback.live = null; Playback.channels = emptyList() }
     }
 
     companion object {
@@ -284,6 +368,7 @@ class PlayerActivity : ComponentActivity() {
             queue: List<Video> = emptyList(), seriesId: String? = null, seriesName: String? = null, fromStart: Boolean = false,
         ) {
             Playback.live = null
+            Playback.channels = emptyList()
             Playback.video = video
             Playback.queue = queue
             Playback.subtitles = subtitles
@@ -293,8 +378,10 @@ class PlayerActivity : ComponentActivity() {
             ctx.startActivity(Intent(ctx, PlayerActivity::class.java))
         }
 
-        fun playLive(ctx: Context, channel: LiveChannel) {
+        fun playLive(ctx: Context, channel: LiveChannel, channels: List<LiveChannel> = emptyList(), playable: Set<String> = emptySet()) {
             Playback.live = channel
+            Playback.channels = channels
+            Playback.playable = playable
             Playback.video = null
             Playback.queue = emptyList()
             ctx.startActivity(Intent(ctx, PlayerActivity::class.java))

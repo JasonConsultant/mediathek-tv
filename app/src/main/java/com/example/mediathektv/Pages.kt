@@ -26,6 +26,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -246,11 +247,21 @@ fun TvPage(app: AppState, nav: Nav) {
                 itemsIndexedCompat(live) { i, ch ->
                     val key = "ch|${ch.name}"
                     val playable = app.playableHere(ch)
+                    val now = Epg.now(ch.name, app.clock)
                     ListItem(
                         selected = ch == selected,
                         onClick = { nav.open(LiveTile(ch)) },
                         headlineContent = { Text(ch.name, fontSize = 15.sp, maxLines = 1) },
-                        supportingContent = if (!playable) ({ Text("nur in ${Geo.name(ch.homeCountry)}", fontSize = 11.sp) }) else null,
+                        supportingContent = {
+                            Column {
+                                Text(if (!playable) "nur in ${Geo.name(ch.homeCountry)}" else now?.title ?: "Jetzt live",
+                                    fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (playable && now != null) {
+                                    Spacer(Modifier.height(3.dp))
+                                    ProgressLine(now.progress(app.clock), Modifier.fillMaxWidth().height(2.dp))
+                                }
+                            }
+                        },
                         leadingContent = {
                             Text("%02d".format(i + 1), fontSize = 13.sp, color = TvColors.TextMuted)
                         },
@@ -288,14 +299,41 @@ private fun ChannelPanel(app: AppState, ch: LiveChannel, f: Filtered, nav: Nav, 
     }
     val series = remember(ch, f) { (f.series + f.filmSeries).filter { it.channel == ch.channel }.take(20) }
     Column(modifier.fillMaxHeight().padding(end = PAGE_PADDING)) {
+        val now = Epg.now(ch.name, app.clock)
+        val next = Epg.upcoming(ch.name, 4, app.clock)
+        // Jetzt läuft
         Box(
-            Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(14.dp))
-                .background(Brush.linearGradient(listOf(TvColors.channel(ch.channel), TvColors.channel(ch.channel).copy(alpha = 0.4f))))
-                .padding(22.dp)
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(TvColors.channel(ch.channel), TvColors.channel(ch.channel).copy(alpha = 0.35f))))
+                .padding(horizontal = 22.dp, vertical = 16.dp)
         ) {
-            Column(Modifier.align(Alignment.CenterStart)) {
-                Text(ch.name, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
-                Text(if (playable) "Jetzt live" else onlyIn(ch), color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp)
+            Column {
+                Text(ch.name.uppercase() + if (playable) "  ·  JETZT" else "  ·  ${onlyIn(ch).uppercase()}",
+                    color = Color.White.copy(alpha = 0.8f), fontSize = 12.sp, letterSpacing = 1.sp)
+                Text(now?.title ?: ch.name, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (now != null) {
+                    Text(listOf(now.times, now.subtitle).filter { it.isNotBlank() }.joinToString("  ·  "),
+                        color = Color.White.copy(alpha = 0.85f), fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Spacer(Modifier.height(8.dp))
+                    ProgressLine(now.progress(app.clock), Modifier.fillMaxWidth().height(4.dp), Color.White)
+                    if (now.description.isNotBlank()) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(now.description, color = Color.White.copy(alpha = 0.85f), fontSize = 12.sp, maxLines = 2,
+                            overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
+                    }
+                }
+            }
+        }
+        // Danach
+        if (next.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            next.forEach { p ->
+                Row(Modifier.padding(vertical = 2.dp)) {
+                    Text(hhmm(p.start), color = TvColors.Accent, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(52.dp))
+                    Text(p.title + if (p.subtitle.isNotBlank()) "  ·  ${p.subtitle}" else "", color = TvColors.Text, fontSize = 13.sp,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
@@ -315,6 +353,11 @@ private fun ChannelPanel(app: AppState, ch: LiveChannel, f: Filtered, nav: Nav, 
             }
         }
     }
+}
+
+@Composable
+fun ProgressLine(fraction: Float, modifier: Modifier, color: Color = TvColors.Accent) = Box(modifier.clip(RoundedCornerShape(2.dp)).background(color.copy(alpha = 0.25f))) {
+    Box(Modifier.fillMaxHeight().fillMaxWidth(fraction.coerceIn(0.02f, 1f)).background(color))
 }
 
 /** items mit Index (für die Sendernummern). */

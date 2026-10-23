@@ -66,6 +66,7 @@ private fun App() {
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { app.start() }
+    LaunchedEffect(Unit) { while (true) { delay(30_000); app.clock = nowSec() } }
 
     // Solange die App sichtbar ist: bei Rückkehr und alle 15 Minuten nach Neuem schauen.
     val lifecycle = LocalLifecycleOwner.current.lifecycle
@@ -130,7 +131,11 @@ private fun App() {
                         stack.add(Screen.Detail(v, tile.seriesName, tile.seriesId))
                     }
                     is SeriesTile -> stack.add(Screen.SeriesView(SeriesState(tile.series)))
-                    is LiveTile -> PlayerActivity.playLive(context, tile.channel)
+                    is LiveTile -> {
+                        val channels = app.filtered?.live.orEmpty()
+                        PlayerActivity.playLive(context, tile.channel, channels,
+                            channels.filter { app.playableHere(it) }.map { it.name }.toSet())
+                    }
                     is AllTile -> tile.spec?.let { browse(it) } ?: tile.tab?.let { tab(it); app.restorePending = true }
                 }
             }

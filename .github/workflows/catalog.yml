@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["tools/build_catalog.py", "tools/corrections.json", ".github/workflows/catalog.yml"]
+    paths: ["tools/build_catalog.py", "tools/build_epg.py", "tools/corrections.json", ".github/workflows/catalog.yml"]
 
 permissions:
   contents: write
@@ -32,6 +32,8 @@ jobs:
         run: git clone -q --depth 1 --branch catalog "https://github.com/${{ github.repository }}.git" prev || echo "Noch kein Katalog vorhanden"
       - name: Katalog bauen
         run: python3 tools/build_catalog.py --previous prev --out out
+      - name: Programmführer (EPG) bauen
+        run: python3 tools/build_epg.py --catalog out/index.json.gz --out out/epg.json.gz || echo "EPG fehlgeschlagen – Katalog trotzdem veröffentlichen"
       - name: Im Branch "catalog" veröffentlichen
         run: |
           cd out

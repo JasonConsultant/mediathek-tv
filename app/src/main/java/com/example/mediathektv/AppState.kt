@@ -143,7 +143,11 @@ class Filtered(
 // ============================================================================
 
 class AppState(context: Context) {
+    private val appContext = context.applicationContext
     val repo = CatalogRepository(context)
+
+    /** Tickt jede halbe Minute – für "Jetzt läuft" und Fortschrittsbalken im Programmführer. */
+    var clock by mutableStateOf(nowSec())
     private val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
 
     var index by mutableStateOf<CatalogIndex?>(null)
@@ -190,17 +194,19 @@ class AppState(context: Context) {
         repo.cached()?.let { show(it) }
         sync(force = true)
         loading = false
+        Epg.refresh(appContext)
     }
 
-    suspend fun sync(force: Boolean = false) = mutex.withLock {
+    suspend fun sync(force: Boolean = false) = coroutineScope { mutex.withLock {
         val now = System.currentTimeMillis()
         if (force || now - lastCheck >= CHECK_INTERVAL) {
             lastCheck = now
             prefs.edit().putLong("lastCheck", now).apply()
+            launch { Epg.refresh(appContext) }
             repo.refresh()?.let { show(it); return@withLock }
         }
         if (repo.storedAt() > loadedAt) repo.cached()?.let { show(it) }
-    }
+    } }
 
     private fun show(i: CatalogIndex) { index = i; loadedAt = repo.storedAt() }
 
