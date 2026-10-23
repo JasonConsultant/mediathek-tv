@@ -491,11 +491,17 @@ def find_image(web):
         img = re.sub(r"/\d+x\d+(\?.*)?$", "/480x270", img)
     return img
 
+IMAGE_CACHE_VERSION = 2   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
+
 def load_image_cache(prev_dir):
     path = prev_dir and os.path.join(prev_dir, "images.json.gz")
     if not path or not os.path.exists(path):
         return {}
-    return read_gz(path)
+    cache = read_gz(path)
+    if cache.pop("_v", None) != IMAGE_CACHE_VERSION:
+        cache = {k: v for k, v in cache.items() if v and v[0]}      # nur Gefundenes behalten
+        print("Bild-Cache: alte Fehlschläge verworfen", file=sys.stderr)
+    return cache
 
 def assign_images(cat, cache):
     """Bilder für Filme/Krimis/Dokus und je ein Titelbild pro Serie. Bekanntes aus dem Cache,
@@ -693,7 +699,7 @@ def main():
     strip_internal(cat)
     size, eps = write(cat, a.out)
     if images:
-        write_gz(os.path.join(a.out, "images.json.gz"), images)
+        write_gz(os.path.join(a.out, "images.json.gz"), {**images, "_v": IMAGE_CACHE_VERSION})
     stats = {k: len(v) for k, v in cat.items() if isinstance(v, list)}
     print("Live: " + ", ".join(o["n"] for o in cat["live"]), file=sys.stderr)
     new = {k: sum(o["fs"] >= NOW - DAY for o in cat[k]) for k in ("films", "crime", "docs")}
