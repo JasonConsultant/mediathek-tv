@@ -3,6 +3,8 @@ name: Build & Release APK
 on:
   push:
     branches: [main]
+    # Nur bei Änderungen an der App – Katalog-Änderungen erzeugen keine neue App-Version
+    paths: ["app/**", "build.gradle.kts", "settings.gradle.kts", "gradle.properties", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 permissions:
