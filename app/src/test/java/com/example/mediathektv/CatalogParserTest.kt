@@ -14,9 +14,9 @@ class CatalogParserTest {
          "films":[{"i":"a1","c":"ARD","t":"Filme in der ARD","n":"Liebe nach Rezept","d":"Text","s":5280,"ts":1792800000,
                    "u":"https://x/de.mp4","ut":"https://x/ut.xml","g":"DE","y":2007,
                    "v":[{"l":"Deutsch (Hörfassung)","u":"https://x/ad.mp4","g":"DE"}],
-                   "a":[{"u":"https://x/ch.mp4","g":"DE-AT-CH"}]}],
+                   "a":[{"u":"https://x/ch.mp4","g":"DE-AT-CH"}],"fs":1792850000}],
          "crime":[],"docs":[{"i":"d1","c":"3Sat","t":"Dokumentarfilm","n":"Doku","s":3000,"ts":1,"u":"https://x/d.mp4"}],
-         "series":[{"id":"s1","n":"Die Rosenheim-Cops","c":"ZDF","k":"serie","cnt":3,"new":5,"d":"x","av":{"DE":3,"AT":3,"CH":0}}],
+         "series":[{"id":"s1","n":"Die Rosenheim-Cops","c":"ZDF","k":"serie","cnt":3,"new":5,"d":"x","av":{"DE":3,"AT":3,"CH":0},"nf":1792860000,"nn":2}],
          "filmSeries":[{"id":"f1","n":"Tatort","c":"ARD","k":"filmreihe","cr":1,"cnt":2,"new":5,"av":{"DE":2,"AT":2,"CH":2}}],
          "docSeries":[]}
     """.trimIndent()
@@ -37,6 +37,12 @@ class CatalogParserTest {
             assertEquals(SeriesKind.FILM_SERIES, idx.filmSeries[0].kind)
             assertTrue(idx.filmSeries[0].crime)
             assertEquals(0, idx.series[0].countIn("CH"))
+            // Neu-Markierung
+            assertEquals(1792850000L, f.firstSeen)
+            assertEquals(1792850000L, f.variants[0].firstSeen)
+            assertEquals(1792860000L, idx.series[0].newestEpisode)
+            assertEquals(2, idx.series[0].newEpisodes)
+            assertEquals(0L, idx.docs[0].firstSeen)   // ältere Kataloge ohne "fs"
         }
     }
 

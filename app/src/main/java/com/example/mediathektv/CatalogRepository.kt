@@ -33,6 +33,9 @@ class CatalogRepository(context: Context) {
     private val etagFile = File(context.filesDir, "catalog/index.etag")
     private val seriesDir = File(context.cacheDir, "series")
 
+    /** Zeitpunkt, zu dem der gespeicherte Katalog zuletzt geschrieben wurde (auch vom Hintergrund-Job). */
+    fun storedAt(): Long = indexFile.lastModified()
+
     /** Zuletzt gespeicherter Katalog (ohne Netz), oder null. */
     suspend fun cached(): CatalogIndex? = withContext(Dispatchers.IO) {
         if (!indexFile.exists()) null
@@ -49,11 +52,13 @@ class CatalogRepository(context: Context) {
                 if (resp.code == 304) return@runCatching null
                 check(resp.isSuccessful) { "HTTP ${resp.code}" }
                 indexFile.parentFile?.mkdirs()
-                val tmp = File(indexFile.path + ".tmp")
+                val tmp = File.createTempFile("index", ".tmp", indexFile.parentFile)
                 resp.body!!.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
                 val parsed = tmp.inputStream().use { CatalogParser.parseIndex(it) }   // erst prüfen, dann übernehmen
-                tmp.renameTo(indexFile)
-                resp.header("ETag")?.let { etagFile.writeText(it) }
+                synchronized(CatalogRepository::class.java) {
+                    if (!tmp.renameTo(indexFile)) { tmp.copyTo(indexFile, overwrite = true); tmp.delete() }
+                    resp.header("ETag")?.let { etagFile.writeText(it) }
+                }
                 parsed
             }
         }.getOrNull()
@@ -139,7 +144,7 @@ object CatalogParser {
     private fun video(r: JsonReader): Video {
         var id = ""; var ch = ""; var topic = ""; var title = ""; var desc = ""
         var secs = 0; var ts = 0L; var url = ""; var sub = ""; var geo = ""
-        var year: Int? = null; var genre: String? = null; var season: Int? = null; var ep: Int? = null
+        var year: Int? = null; var genre: String? = null; var season: Int? = null; var ep: Int? = null; var fs = 0L
         var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>()
         r.beginObject()
         while (r.hasNext()) {
@@ -158,6 +163,7 @@ object CatalogParser {
                 "ge" -> genre = r.nextString()
                 "se" -> season = r.nextInt()
                 "ep" -> ep = r.nextInt()
+                "fs" -> fs = r.nextLong()
                 "v" -> variants = list(r) { lang, src -> lang to src }
                 "a" -> alts = list(r) { _, src -> src }
                 else -> r.skipValue()
@@ -167,7 +173,7 @@ object CatalogParser {
         val main = Video(
             id = id, channel = ch, topic = topic, title = title, description = desc, duration = secs,
             timestamp = ts, source = Source(url, sub, geo), year = year, genre = genre,
-            episode = ep?.let { Episode(season, it) }, alternatives = alts,
+            episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs,
         )
         return main.copy(variants = variants.mapIndexed { i, (lang, src) ->
             main.copy(id = "$id-$i", language = lang, source = src, alternatives = emptyList())
@@ -198,7 +204,7 @@ object CatalogParser {
         r.beginArray()
         while (r.hasNext()) {
             var id = ""; var name = ""; var ch = ""; var kind = SeriesKind.SERIES; var crime = false
-            var count = 0; var latest = 0L; var desc = ""; val av = HashMap<String, Int>()
+            var count = 0; var latest = 0L; var desc = ""; val av = HashMap<String, Int>(); var nf = 0L; var nn = 0
             r.beginObject()
             while (r.hasNext()) when (r.nextName()) {
                 "id" -> id = r.nextString()
@@ -209,6 +215,8 @@ object CatalogParser {
                 "cnt" -> count = r.nextInt()
                 "new" -> latest = r.nextLong()
                 "d" -> desc = r.nextString()
+                "nf" -> nf = r.nextLong()
+                "nn" -> nn = r.nextInt()
                 "av" -> {
                     r.beginObject()
                     while (r.hasNext()) av[r.nextName()] = r.nextInt()
@@ -217,7 +225,7 @@ object CatalogParser {
                 else -> r.skipValue()
             }
             r.endObject()
-            out.add(SeriesInfo(id, name, ch, kind, crime, count, latest, desc, av))
+            out.add(SeriesInfo(id, name, ch, kind, crime, count, latest, desc, av, nf, nn))
         }
         r.endArray()
         return out

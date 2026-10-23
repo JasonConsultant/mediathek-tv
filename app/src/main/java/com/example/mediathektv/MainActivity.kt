@@ -42,7 +42,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.tv.material3.*
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.ProcessLifecycleOwner
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,6 +61,7 @@ import java.util.Locale
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        CatalogRefreshWorker.schedule(this)
         setContent {
             MaterialTheme(
                 colorScheme = darkColorScheme(
@@ -92,6 +101,16 @@ private class Filtered(
     val films: List<Video>, val crime: List<Video>, val docs: List<Video>,
     val series: List<SeriesInfo>, val filmSeries: List<SeriesInfo>, val docSeries: List<SeriesInfo>,
 ) {
+    private val dayAgo = System.currentTimeMillis() / 1000 - DAY
+
+    /** Filme, Krimis, Dokus, die in den letzten 24 Stunden in den Katalog kamen – neueste zuerst. */
+    val newVideos: List<Video> = (films + crime + docs).filter { it.firstSeen >= dayAgo }
+        .distinctBy { it.id }.sortedByDescending { it.firstSeen }
+
+    /** Serien und Reihen mit Folgen der letzten 24 Stunden. */
+    val newSeries: List<SeriesInfo> = (series + filmSeries + docSeries).filter { it.newestEpisode >= dayAgo }
+        .sortedByDescending { it.newestEpisode }
+
     fun videos(c: Category) = when (c) { Category.FILMS -> films; Category.CRIME -> crime; Category.DOCS -> docs; else -> emptyList() }
     fun series(c: Category) = when (c) { Category.SERIES -> series; Category.FILM_SERIES -> filmSeries; Category.DOC_SERIES -> docSeries; else -> emptyList() }
     fun size(c: Category) = if (c.isSeries) series(c).size else videos(c).size
@@ -123,12 +142,55 @@ private class AppState(context: Context) {
         prefs.edit().putString("country", next).apply()
     }
 
-    suspend fun load() = coroutineScope {
+    // ---------- Laden & automatisches Nachladen ----------
+    private val mutex = Mutex()
+    private var loadedAt = 0L                                   // Stand des angezeigten Katalogs (Dateizeit)
+    private var lastCheck = prefs.getLong("lastCheck", 0L)      // letzte Prüfung im Netz (ms)
+    private var lastUpdateCheck = 0L
+
+    /** Beim Start: gespeicherten Katalog sofort zeigen, dann im Netz nach einem neuen schauen. */
+    suspend fun start() = coroutineScope {
         loading = true
         launch { detected = CountryDetector.detect() }
-        repo.cached()?.let { index = it; loading = false }   // sofort anzeigen, was schon da ist
-        repo.refresh()?.let { index = it }                   // dann aktualisieren
+        repo.cached()?.let { show(it) }
+        sync(force = true)
         loading = false
+    }
+
+    /**
+     * Holt einen neuen Katalog, wenn die letzte Prüfung länger als [CHECK_INTERVAL] her ist,
+     * und übernimmt einen Katalog, den der Hintergrund-Job inzwischen gespeichert hat.
+     */
+    suspend fun sync(force: Boolean = false) = mutex.withLock {
+        val now = System.currentTimeMillis()
+        if (force || now - lastCheck >= CHECK_INTERVAL) {
+            lastCheck = now
+            prefs.edit().putLong("lastCheck", now).apply()
+            repo.refresh()?.let { show(it); return@withLock }
+        }
+        if (repo.storedAt() > loadedAt) repo.cached()?.let { show(it) }
+    }
+
+    private fun show(i: CatalogIndex) { index = i; loadedAt = repo.storedAt() }
+
+    fun updateCheckDue(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateCheck < UPDATE_INTERVAL) return false
+        lastUpdateCheck = now
+        return true
+    }
+
+    // ---------- "Neu seit deinem letzten Besuch" ----------
+    /** Alles, was nach diesem Zeitpunkt (Unix-Sekunden) in den Katalog kam, bekommt ein NEU-Abzeichen. */
+    var sinceVisit by mutableStateOf(prefs.getLong("lastLeft", 0L).takeIf { it > 0 } ?: (nowSec() - DAY))
+
+    /** App wird verlassen (Home-Taste, anderer Sender …) – nicht beim Abspielen eines Films. */
+    fun onAppLeft() = prefs.edit().putLong("lastLeft", nowSec()).apply()
+
+    /** App kommt zurück: nach mindestens einer Stunde Abwesenheit zählt das als neuer Besuch. */
+    fun onAppReturned() {
+        val left = prefs.getLong("lastLeft", 0L)
+        if (left > 0 && nowSec() - left >= 3600) sinceVisit = left
     }
 
     // Startseite
@@ -201,10 +263,35 @@ private fun App() {
     val scope = rememberCoroutineScope()
     var update by remember { mutableStateOf<Update?>(null) }
 
-    LaunchedEffect(Unit) {
-        launch { app.load() }
-        update = Updater.check()
+    LaunchedEffect(Unit) { app.start() }
+
+    // Solange die Startseite sichtbar ist: bei Rückkehr und alle 15 Minuten nach Neuem schauen.
+    // Während ein Film läuft (Player im Vordergrund) ruht das.
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                if (!app.loading) app.sync()
+                if (app.updateCheckDue()) Updater.check()?.let { update = it }
+                delay(SYNC_TICK)
+            }
+        }
     }
+
+    // App als Ganzes verlassen / zurückgekehrt (für "Neu seit deinem letzten Besuch")
+    DisposableEffect(Unit) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> app.onAppLeft()
+                Lifecycle.Event.ON_START -> app.onAppReturned()
+                else -> Unit
+            }
+        }
+        val process = ProcessLifecycleOwner.get().lifecycle
+        process.addObserver(observer)
+        onDispose { process.removeObserver(observer) }
+    }
+
     BackHandler(enabled = stack.size > 1) { stack.removeAt(stack.lastIndex) }
 
     fun openVideo(v: Video, series: String? = null) = stack.add(Screen.Detail(v, series))
@@ -216,7 +303,7 @@ private fun App() {
             Screen.Home -> HomeScreen(
                 app, onVideo = { openVideo(it) }, onSeries = ::openSeries, onAll = ::openAll,
                 onSearch = { scope.launch { runSearch(app) } },
-                onRetry = { scope.launch { app.load() } },
+                onRetry = { scope.launch { app.start() } },
             )
             is Screen.Browse -> BrowseScreen(app, screen.state, onVideo = { openVideo(it) }, onSeries = ::openSeries)
             is Screen.SeriesView -> SeriesScreen(app, screen.state) { openVideo(it, screen.state.info.name) }
@@ -297,12 +384,18 @@ private fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(22.dp),
         ) {
             app.search?.let { s ->
-                item(key = "search-series") { SeriesRow("Suche: Serien & Reihen", "search", s.series, null, app, onSeries, {}) }
-                item(key = "search-videos") { VideoRow("Suche: Sendungen", "search", s.videos, null, app, onVideo, {}) }
+                item(key = "search-series") { SeriesRow("Suche: Serien & Reihen", "search", s.series, null, app, onSeries) }
+                item(key = "search-videos") { VideoRow("Suche: Sendungen", "search", s.videos, null, app, onVideo) }
                 item(key = "search-live") {
                     if (s.live == null) Column { RowTitle("Suche in allen Mediatheken"); Hint("Sucht …") }
-                    else VideoRow("Weitere Treffer in allen Mediatheken", "live", s.live, null, app, onVideo, {})
+                    else VideoRow("Weitere Treffer in allen Mediatheken", "live", s.live, null, app, onVideo)
                 }
+            }
+            if (f.newVideos.isNotEmpty()) item(key = "new-videos") {
+                VideoRow("Neu seit gestern", "new", f.newVideos.take(40), null, app, onVideo, count = f.newVideos.size)
+            }
+            if (f.newSeries.isNotEmpty()) item(key = "new-series") {
+                SeriesRow("Neue Folgen", "newsrs", f.newSeries.take(40), null, app, onSeries, count = f.newSeries.size)
             }
             for (c in Category.entries) item(key = c.name) {
                 if (c.isSeries) SeriesRow(c.title, c.name, f.series(c).take(ROW_SIZE), f.size(c), app, onSeries) { onAll(c) }
@@ -313,6 +406,11 @@ private fun HomeScreen(
 }
 
 private const val ROW_SIZE = 24
+private const val DAY = 24 * 3600L
+private const val CHECK_INTERVAL = 60 * 60 * 1000L        // höchstens stündlich im Netz nachsehen
+private const val UPDATE_INTERVAL = 6 * 60 * 60 * 1000L   // App-Updates alle 6 Stunden prüfen
+private const val SYNC_TICK = 15 * 60 * 1000L             // solange offen: alle 15 Minuten
+private fun nowSec() = System.currentTimeMillis() / 1000
 
 @Composable
 private fun Header(app: AppState, onSearch: () -> Unit) {
@@ -366,17 +464,17 @@ private fun RowTitle(text: String) =
 @Composable
 private fun VideoRow(
     title: String, rowKey: String, videos: List<Video>, total: Int?,
-    app: AppState, onVideo: (Video) -> Unit, onAll: () -> Unit,
+    app: AppState, onVideo: (Video) -> Unit, count: Int? = total, onAll: () -> Unit = {},
 ) {
     if (videos.isEmpty()) return
     val ui = app.home
     Column {
-        RowTitle(if (total != null) "$title  ·  $total" else title)
+        RowTitle(if (count != null) "$title  ·  $count" else title)
         LazyRow(state = ui.row(rowKey), contentPadding = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(videos.distinctBy { it.id }, key = { it.id }) { v ->
                 val key = "v-$rowKey|${v.id}"
-                VideoCard(v, overlineOf(v), v.title,
+                VideoCard(v, overlineOf(v), v.title, app.sinceVisit,
                     Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = v.preview() }) { onVideo(v) }
             }
             if (total != null && total > videos.size) item(key = "all") {
@@ -390,17 +488,17 @@ private fun VideoRow(
 @Composable
 private fun SeriesRow(
     title: String, rowKey: String, series: List<SeriesInfo>, total: Int?,
-    app: AppState, onSeries: (SeriesInfo) -> Unit, onAll: () -> Unit,
+    app: AppState, onSeries: (SeriesInfo) -> Unit, count: Int? = total, onAll: () -> Unit = {},
 ) {
     if (series.isEmpty()) return
     val ui = app.home
     Column {
-        RowTitle(if (total != null) "$title  ·  $total" else title)
+        RowTitle(if (count != null) "$title  ·  $count" else title)
         LazyRow(state = ui.row(rowKey), contentPadding = PaddingValues(horizontal = 48.dp),
             horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             items(series, key = { it.id }) { s ->
                 val key = "s-$rowKey|${s.id}"
-                SeriesCard(s, app.country,
+                SeriesCard(s, app.country, app.sinceVisit,
                     Modifier.width(CARD_WIDTH).restoreFocus(key, ui.focusKey) { ui.focusKey = key; ui.preview = s.preview(app.country) }) { onSeries(s) }
             }
             if (total != null && total > series.size) item(key = "all") {
@@ -474,9 +572,9 @@ private fun BrowseScreen(app: AppState, state: BrowseState, onVideo: (Video) -> 
             contentPadding = PaddingValues(vertical = 6.dp),
         ) {
             if (c.isSeries) gridItems(shownSeries, key = { it.id }) { s ->
-                SeriesCard(s, app.country, Modifier.fillMaxWidth().restoreFocus(s.id, state.focusKey) { state.focusKey = it }) { onSeries(s) }
+                SeriesCard(s, app.country, app.sinceVisit, Modifier.fillMaxWidth().restoreFocus(s.id, state.focusKey) { state.focusKey = it }) { onSeries(s) }
             } else gridItems(shownVideos, key = { it.id }) { v ->
-                VideoCard(v, overlineOf(v), v.title, Modifier.fillMaxWidth().restoreFocus(v.id, state.focusKey) { state.focusKey = it }) { onVideo(v) }
+                VideoCard(v, overlineOf(v), v.title, app.sinceVisit, Modifier.fillMaxWidth().restoreFocus(v.id, state.focusKey) { state.focusKey = it }) { onVideo(v) }
             }
         }
     }
@@ -528,6 +626,7 @@ private fun SeriesScreen(app: AppState, state: SeriesState, onVideo: (Video) -> 
                     video = v,
                     overline = v.episode?.label ?: listOfNotNull(v.year?.toString(), dateOf(v.timestamp)).first(),
                     title = Meta.episodeTitle(v.title, s.name),
+                    newSince = app.sinceVisit,
                     modifier = Modifier.fillMaxWidth().restoreFocus(v.id, state.focusKey) { state.focusKey = it },
                 ) { onVideo(v) }
             }
@@ -598,23 +697,29 @@ private fun DetailScreen(video: Video, seriesName: String?, onPlay: (Video, Bool
 private val CARD_WIDTH = 232.dp
 
 @Composable
-private fun VideoCard(video: Video, overline: String, title: String, modifier: Modifier, onClick: () -> Unit) {
+private fun VideoCard(video: Video, overline: String, title: String, newSince: Long, modifier: Modifier, onClick: () -> Unit) {
     val badges = buildList {
         if (video.hasSubtitles) add("UT")
         if (video.variants.isNotEmpty()) add("${video.versions.size} Fassungen")
         add("${video.minutes} Min")
     }
-    TileCard(video.channel, badges, overline, title, modifier, onClick)
+    val isNew = video.firstSeen > 0 && video.firstSeen > newSince
+    TileCard(video.channel, badges, overline, title, modifier, if (isNew) "NEU" else null, onClick)
 }
 
 @Composable
-private fun SeriesCard(s: SeriesInfo, country: String, modifier: Modifier, onClick: () -> Unit) =
+private fun SeriesCard(s: SeriesInfo, country: String, newSince: Long, modifier: Modifier, onClick: () -> Unit) {
+    val films = s.kind == SeriesKind.FILM_SERIES
+    val isNew = s.newestEpisode > 0 && s.newestEpisode > newSince
     TileCard(
         s.channel,
-        listOf("${s.countIn(country)} " + if (s.kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"),
+        listOf("${s.countIn(country)} " + if (films) "Filme" else "Folgen"),
         "${kindLabel(s.kind)}${if (s.crime) " · Krimi" else ""}",
-        s.name, modifier, onClick,
+        s.name, modifier,
+        if (isNew) (if (films) "NEUER FILM" else "NEUE FOLGEN") else null,
+        onClick,
     )
+}
 
 @Composable
 private fun AllCard(total: Int, title: String, modifier: Modifier, onClick: () -> Unit) {
@@ -635,7 +740,10 @@ private fun AllCard(total: Int, title: String, modifier: Modifier, onClick: () -
 private val CARD_IMAGE = 128.dp
 
 @Composable
-private fun TileCard(channel: String, badges: List<String>, overline: String, title: String, modifier: Modifier, onClick: () -> Unit) {
+private fun TileCard(
+    channel: String, badges: List<String>, overline: String, title: String, modifier: Modifier,
+    highlight: String? = null, onClick: () -> Unit,
+) {
     val shape = RoundedCornerShape(12.dp)
     Card(
         onClick = onClick, modifier = modifier,
@@ -648,6 +756,11 @@ private fun TileCard(channel: String, badges: List<String>, overline: String, ti
             .background(Brush.linearGradient(listOf(TvColors.channel(channel), TvColors.Surface)))) {
             Text(channel, color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp, fontWeight = FontWeight.Bold,
                 modifier = Modifier.align(Alignment.TopStart).padding(10.dp))
+            highlight?.let {
+                Text(it, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(5.dp))
+                        .background(TvColors.New).padding(horizontal = 6.dp, vertical = 2.dp))
+            }
             Row(Modifier.align(Alignment.BottomEnd).padding(6.dp), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 badges.forEach { Badge(it) }
             }
