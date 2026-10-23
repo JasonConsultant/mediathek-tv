@@ -41,9 +41,15 @@ private const val ROW = 24
 // Reihen je Rubrik
 // ============================================================================
 
-private fun videoRow(key: String, title: String, videos: List<Video>, unit: String = "Sendungen", limit: Int = ROW): Shelf? {
+/**
+ * Reihe mit Sendungen. [chronological] = Reihenfolge beibehalten (für "Neu …"-Reihen);
+ * sonst stehen Sendungen mit Vorschaubild vorne – das sieht deutlich besser aus.
+ */
+private fun videoRow(key: String, title: String, videos: List<Video>, unit: String = "Sendungen", limit: Int = ROW,
+                     chronological: Boolean = false): Shelf? {
     if (videos.isEmpty()) return null
-    val tiles = videos.take(limit).map { VideoTile(it, overlineOf(it)) } +
+    val shown = if (chronological) videos.take(limit) else videos.sortedByDescending { it.image != null }.take(limit)
+    val tiles = shown.map { VideoTile(it, overlineOf(it)) } +
         if (videos.size > limit) listOf(AllTile(videos.size, unit, BrowseSpec(title, unit, videos = videos))) else emptyList()
     return Shelf(key, title, tiles, videos.size)
 }
@@ -79,7 +85,7 @@ private fun channelRows(prefix: String, videos: List<Video>, unit: String, min: 
 /** Inhalt einer Rubrik als Reihen (ohne die persönlichen Reihen, die kommen dynamisch dazu). */
 fun buildShelves(tab: Tab, f: Filtered): List<Shelf> = when (tab) {
     Tab.START -> listOfNotNull(
-        videoRow("new", "Neu seit gestern", f.newVideos),
+        videoRow("new", "Neu seit gestern", f.newVideos, chronological = true),
         seriesRow("newsrs", "Neue Folgen", f.newSeries, "Serien und Reihen"),
         f.live.takeIf { it.isNotEmpty() }?.let { live ->
             Shelf("live", "Live-TV", live.take(12).map { LiveTile(it) } + AllTile(live.size, "Sender", null, Tab.LIVE), live.size)
@@ -92,7 +98,7 @@ fun buildShelves(tab: Tab, f: Filtered): List<Shelf> = when (tab) {
     )
 
     Tab.FILME -> buildList {
-        videoRow("f-new", "Neu in der Mediathek", f.films, "Filme")?.let(::add)
+        videoRow("f-new", "Neu in der Mediathek", f.films, "Filme", chronological = true)?.let(::add)
         for ((g, label) in genrePlural) {
             val list = f.films.filter { it.genre == g }
             if (list.size >= 6) videoRow("f-$g", label, list, label)?.let(::add)
@@ -113,7 +119,7 @@ fun buildShelves(tab: Tab, f: Filtered): List<Shelf> = when (tab) {
     }
 
     Tab.KRIMIS -> buildList {
-        videoRow("k-new", "Neue Krimis", f.crime, "Krimis")?.let(::add)
+        videoRow("k-new", "Neue Krimis", f.crime, "Krimis", chronological = true)?.let(::add)
         videoRow("k-tatort", "Tatort", f.crime.filter { it.topic.startsWith("Tatort") }, "Tatorte")?.let(::add)
         videoRow("k-polizeiruf", "Polizeiruf 110", f.crime.filter { it.topic.startsWith("Polizeiruf") }, "Filme")?.let(::add)
         seriesRow("k-reihen", "Krimi-Reihen", f.filmSeries.filter { it.crime }, "Reihen")?.let(::add)
@@ -122,7 +128,7 @@ fun buildShelves(tab: Tab, f: Filtered): List<Shelf> = when (tab) {
     }
 
     Tab.DOKUS -> buildList {
-        videoRow("d-new", "Neue Dokus", f.docs, "Dokus")?.let(::add)
+        videoRow("d-new", "Neue Dokus", f.docs, "Dokus", chronological = true)?.let(::add)
         seriesRow("d-reihen", "Doku-Reihen", f.docSeries, "Reihen")?.let(::add)
         for ((theme, re) in docThemes) {
             val list = f.docs.filter { re.containsMatchIn(it.topic) || re.containsMatchIn(it.title) }
