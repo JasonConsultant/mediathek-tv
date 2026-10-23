@@ -1,10 +1,10 @@
 name: Katalog aktualisieren
 
-# Baut täglich den Katalog aus der MediathekView-Filmliste und legt ihn im Branch "catalog" ab.
+# Baut alle 3 Stunden den Katalog aus der MediathekView-Filmliste und legt ihn im Branch "catalog" ab.
 # Die App lädt ihn von dort (raw.githubusercontent.com).
 on:
   schedule:
-    - cron: "17 4 * * *"      # täglich ca. 05:17/06:17 Uhr (MEZ/MESZ)
+    - cron: "17 */3 * * *"    # alle 3 Stunden (xx:17 UTC)
   workflow_dispatch:
   push:
     branches: [main]
@@ -28,8 +28,10 @@ jobs:
           python-version: "3.13"
       - name: Abhängigkeiten
         run: pip install scikit-learn==1.9.1
+      - name: Vorherigen Katalog holen (für die "Neu"-Markierung)
+        run: git clone -q --depth 1 --branch catalog "https://github.com/${{ github.repository }}.git" prev || echo "Noch kein Katalog vorhanden"
       - name: Katalog bauen
-        run: python3 tools/build_catalog.py --out out
+        run: python3 tools/build_catalog.py --previous prev --out out
       - name: Im Branch "catalog" veröffentlichen
         run: |
           cd out
@@ -37,5 +39,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
-          git commit -q -m "Katalog $(date -u +%Y-%m-%d)"
+          git commit -q -m "Katalog $(date -u "+%Y-%m-%d %H:%M") UTC"
           git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" catalog

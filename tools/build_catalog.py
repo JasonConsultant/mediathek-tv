@@ -15,9 +15,12 @@ Ausgabe (Ordner):
   index.json.gz      Filme, Krimis, Dokus + Kopfdaten aller Serien/Reihen
   s/<id>.json.gz     Folgen einer Serie (lädt die App erst beim Öffnen)
 
-Aufruf: python3 tools/build_catalog.py [--input Filmliste-akt.xz] [--out catalog]
+"Neu": Jede Sendung trägt "fs" = Zeitpunkt, an dem sie erstmals im Katalog auftauchte.
+Dafür wird der vorherige Katalog (--previous) eingelesen und fortgeschrieben.
+
+Aufruf: python3 tools/build_catalog.py [--input Filmliste-akt.xz] [--previous alter_katalog] [--out catalog]
 """
-import argparse, gzip, hashlib, json, lzma, os, re, shutil, sys, time, urllib.request
+import argparse, glob, gzip, hashlib, json, lzma, os, re, shutil, sys, time, urllib.request
 from collections import Counter, defaultdict
 
 FILMLISTE_URL = "https://liste.mediathekview.de/Filmliste-akt.xz"
@@ -389,7 +392,7 @@ def build(rows):
         return [compact(r) for r in b[:limit]]
 
     catalog = {
-        "version": 1,
+        "version": 2,
         "generated": NOW,
         "films": make_list(films, 4000),
         "crime": make_list(crime, 3000),
@@ -405,6 +408,57 @@ def write_gz(path, obj):
     with gzip.open(path, "wb", compresslevel=9) as f:
         f.write(raw)
     return len(raw)
+
+# ---------------------------------------------------------------- Erstauftritt ("Neu")
+
+DAY = 24 * 3600
+
+def fs_key(o):
+    """Stabiler Schlüssel einer Sendung über Läufe hinweg (URLs ändern sich gelegentlich)."""
+    return f'{norm(o.get("t", ""))}|{norm(o.get("n", ""))}|{o.get("se")}|{o.get("ep")}'
+
+def read_gz(path):
+    with gzip.open(path, "rt", encoding="utf-8") as f:
+        return json.load(f)
+
+def load_previous(prev_dir):
+    """Liest den vorherigen Katalog: Schlüssel -> Erstauftritt (None bei altem Katalog ohne 'fs')."""
+    if not prev_dir or not os.path.exists(os.path.join(prev_dir, "index.json.gz")):
+        return None
+    idx = read_gz(os.path.join(prev_dir, "index.json.gz"))
+    seen = {}
+    def take(objs):
+        for o in objs:
+            k, v = fs_key(o), o.get("fs")
+            old = seen.get(k, v)
+            seen[k] = v if old is None else (old if v is None else min(old, v))
+    for key in ("films", "crime", "docs"):
+        take(idx.get(key, []))
+    for path in glob.glob(os.path.join(prev_dir, "s", "*.json.gz")):
+        try:
+            take(read_gz(path).get("e", []))
+        except (OSError, ValueError):
+            pass
+    print(f"Vorheriger Katalog: {len(seen)} Sendungen bekannt", file=sys.stderr)
+    return {"generated": idx.get("generated", NOW), "seen": seen}
+
+def assign_first_seen(cat, prev):
+    def first_seen(o):
+        ts = min(o.get("ts") or NOW, NOW)
+        if prev is None:
+            return ts                                     # allererster Lauf: Sendedatum als Näherung
+        k = fs_key(o)
+        if k in prev["seen"]:
+            v = prev["seen"][k]
+            return v if v is not None else min(ts, prev["generated"])  # Katalog ohne 'fs' (Umstellung)
+        return NOW                                        # wirklich neu dazugekommen
+    for key in ("films", "crime", "docs"):
+        for o in cat[key]:
+            o["fs"] = first_seen(o)
+    for group in ("series", "filmSeries", "docSeries"):
+        for s in cat[group]:
+            for e in s["e"]:
+                e["fs"] = first_seen(e)
 
 def write(cat, out_dir):
     if os.path.isdir(out_dir):
@@ -425,6 +479,9 @@ def write(cat, out_dir):
                 "d": (recent.get("d") or "")[:240],
                 # Anzahl abspielbarer Folgen je Land – die App blendet Serien ohne Folgen aus
                 "av": {c: sum(available(e, c) for e in eps) for c in ("DE", "AT", "CH")},
+                # Neu: Erstauftritt der neuesten Folge und Anzahl Folgen der letzten 24 Stunden
+                "nf": max(e.get("fs", 0) for e in eps),
+                "nn": sum(e.get("fs", 0) >= NOW - DAY for e in eps),
             })
         index[group] = heads
     size = write_gz(os.path.join(out_dir, "index.json.gz"), index)
@@ -433,15 +490,20 @@ def write(cat, out_dir):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--input", help="lokale Filmliste-akt.xz (sonst Download)")
+    ap.add_argument("--previous", help="Ordner mit dem vorherigen Katalog (für 'Neu')")
     ap.add_argument("--out", default="catalog")
     a = ap.parse_args()
     t = time.time()
     rows = load(a.input)
     print(f"Filmliste: {len(rows)} Einträge", file=sys.stderr)
     cat = build(rows)
+    assign_first_seen(cat, load_previous(a.previous))
     size, eps = write(cat, a.out)
     stats = {k: len(v) for k, v in cat.items() if isinstance(v, list)}
+    new = {k: sum(o["fs"] >= NOW - DAY for o in cat[k]) for k in ("films", "crime", "docs")}
+    new["Folgen"] = sum(e["fs"] >= NOW - DAY for g in ("series", "filmSeries", "docSeries") for s in cat[g] for e in s["e"])
     print(f"Fertig in {time.time()-t:.0f}s: {stats}, {eps} Folgen; Übersicht {size/1e6:.1f} MB → {a.out}/", file=sys.stderr)
+    print(f"Neu in den letzten 24 Stunden: {new}", file=sys.stderr)
 
 if __name__ == "__main__":
     main()
