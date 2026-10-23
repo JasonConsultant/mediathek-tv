@@ -34,7 +34,8 @@ import java.util.Locale
 // Maße: ca. 5 Kacheln pro Zeile auf einem 16:9-Fernseher
 val CARD_WIDTH = 180.dp
 val CARD_IMAGE = 101.dp          // 16:9
-val PAGE_PADDING = 48.dp
+val PAGE_PADDING = 28.dp
+val RAIL_WIDTH = 76.dp           // eingeklappte Seitenleiste
 
 // ============================================================================
 // Kacheln
@@ -45,7 +46,7 @@ val PAGE_PADDING = 48.dp
 fun TileView(tile: Tile, app: AppState, modifier: Modifier, onClick: () -> Unit) = when (tile) {
     is VideoTile -> VideoCard(tile.video, tile.overline, tile.title, app.sinceVisit, modifier, onClick)
     is SeriesTile -> SeriesCard(tile.series, app.country, app.sinceVisit, modifier, onClick)
-    is LiveTile -> LiveCard(tile.channel, modifier, onClick)
+    is LiveTile -> LiveCard(tile.channel, app.playableHere(tile.channel), modifier, onClick)
     is AllTile -> AllCard(tile.count, tile.label, modifier, onClick)
 }
 
@@ -76,9 +77,12 @@ fun SeriesCard(s: SeriesInfo, country: String, newSince: Long, modifier: Modifie
 }
 
 @Composable
-fun LiveCard(ch: LiveChannel, modifier: Modifier, onClick: () -> Unit) =
-    TileCard(channel = ch.channel, image = null, overline = "Jetzt live", title = ch.name, modifier = modifier,
-        badge = "LIVE", badgeColor = TvColors.New, placeholder = ch.name, onClick = onClick)
+fun LiveCard(ch: LiveChannel, playable: Boolean, modifier: Modifier, onClick: () -> Unit) =
+    TileCard(channel = ch.channel, image = null, overline = if (playable) "Jetzt live" else onlyIn(ch), title = ch.name,
+        modifier = modifier, badge = if (playable) "LIVE" else "nur ${ch.homeCountry}",
+        badgeColor = if (playable) TvColors.New else TvColors.SurfaceHigh, placeholder = ch.name, onClick = onClick)
+
+fun onlyIn(ch: LiveChannel) = "Nur in ${Geo.name(ch.homeCountry)} abspielbar"
 
 @Composable
 fun AllCard(total: Int, label: String, modifier: Modifier, onClick: () -> Unit) {
@@ -204,8 +208,7 @@ fun Tile.preview(country: String): Preview? = when (this) {
         "${series.countIn(country)} " + (if (series.kind == SeriesKind.FILM_SERIES) "Filme" else "Folgen"),
         series.description, series.image,
     )
-    is LiveTile -> Preview("Live-TV", channel.name, "Jetzt live · ${displayChannel(channel.channel)}",
-        if (channel.srgUrn.isNotBlank()) "Nur in der Schweiz verfügbar." else "", null)
+    is LiveTile -> Preview("TV-Sender", channel.name, "Jetzt live · ${displayChannel(channel.channel)}", "", null)
     is AllTile -> null
 }
 

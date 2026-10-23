@@ -16,7 +16,9 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -88,7 +90,7 @@ fun buildShelves(tab: Tab, f: Filtered): List<Shelf> = when (tab) {
         videoRow("new", "Neu seit gestern", f.newVideos, chronological = true),
         seriesRow("newsrs", "Neue Folgen", f.newSeries, "Serien und Reihen"),
         f.live.takeIf { it.isNotEmpty() }?.let { live ->
-            Shelf("live", "Live-TV", live.take(12).map { LiveTile(it) } + AllTile(live.size, "Sender", null, Tab.LIVE), live.size)
+            Shelf("live", "TV-Sender", live.take(12).map { LiveTile(it) } + AllTile(live.size, "Sender", null, Tab.LIVE), live.size)
         },
         videoRow("films", "Filme", f.films, "Filme"),
         seriesRow("series", "Serien", f.series),
@@ -223,33 +225,102 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
 }
 
 // ============================================================================
-// Live-TV: alle Sender als Raster
+// TV-Sender (wie TiviMate): Senderliste links, Infos und Sendungen rechts
 // ============================================================================
 
 @Composable
-fun LivePage(app: AppState, nav: Nav) {
-    val live = app.filtered?.live.orEmpty()
+fun TvPage(app: AppState, nav: Nav) {
+    val f = app.filtered ?: return
+    val live = f.live
     val ui = app.pages.getValue(Tab.LIVE)
-    LaunchedEffect(live.size) { if (ui.focusKey == null) ui.focusKey = live.firstOrNull()?.let { "live|${it.name}" } }
-    Column(Modifier.fillMaxSize().padding(horizontal = PAGE_PADDING)) {
-        Spacer(Modifier.height(8.dp))
-        Text("Live-TV", color = TvColors.Text, fontSize = 26.sp, fontWeight = FontWeight.Bold)
-        Text("${live.size} Sender", color = TvColors.TextMuted, fontSize = 13.sp)
-        Spacer(Modifier.height(14.dp))
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(CARD_WIDTH),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = PaddingValues(bottom = 48.dp, top = 6.dp),
+    val selected = ui.selectedChannel?.takeIf { it in live } ?: live.firstOrNull()
+    LaunchedEffect(live) { if (ui.focusKey == null) ui.focusKey = live.firstOrNull()?.let { "ch|${it.name}" } }
+
+    Row(Modifier.fillMaxSize().padding(start = PAGE_PADDING, top = 18.dp)) {
+        // ---- Senderliste
+        Column(Modifier.width(300.dp).fillMaxHeight()) {
+            Text("TV-Sender", color = TvColors.Text, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Angebot: ${Geo.name(app.country)} · ${live.size} Sender", color = TvColors.TextMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(state = ui.column, verticalArrangement = Arrangement.spacedBy(4.dp), contentPadding = PaddingValues(bottom = 40.dp)) {
+                itemsIndexedCompat(live) { i, ch ->
+                    val key = "ch|${ch.name}"
+                    val playable = app.playableHere(ch)
+                    ListItem(
+                        selected = ch == selected,
+                        onClick = { nav.open(LiveTile(ch)) },
+                        headlineContent = { Text(ch.name, fontSize = 15.sp, maxLines = 1) },
+                        supportingContent = if (!playable) ({ Text("nur in ${Geo.name(ch.homeCountry)}", fontSize = 11.sp) }) else null,
+                        leadingContent = {
+                            Text("%02d".format(i + 1), fontSize = 13.sp, color = TvColors.TextMuted)
+                        },
+                        trailingContent = if (playable) ({
+                            Text("LIVE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White,
+                                modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(TvColors.New).padding(horizontal = 5.dp, vertical = 1.dp))
+                        }) else null,
+                        colors = ListItemDefaults.colors(
+                            containerColor = Color.Transparent,
+                            selectedContainerColor = TvColors.SurfaceHigh,
+                            focusedContainerColor = Color.White,
+                            contentColor = TvColors.Text,
+                            focusedContentColor = TvColors.Background,
+                            selectedContentColor = TvColors.Text,
+                        ),
+                        modifier = Modifier.restoreFocus(key, ui.focusKey, enabled = app.restorePending,
+                            onRestored = { app.restorePending = false }) { ui.focusKey = it; ui.selectedChannel = ch },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.width(28.dp))
+        // ---- Infobereich des gewählten Senders
+        selected?.let { ch -> ChannelPanel(app, ch, f, nav, Modifier.weight(1f)) }
+    }
+}
+
+@Composable
+private fun ChannelPanel(app: AppState, ch: LiveChannel, f: Filtered, nav: Nav, modifier: Modifier) {
+    val playable = app.playableHere(ch)
+    // Sendungen dieses Senders aus der Mediathek
+    val videos = remember(ch, f) {
+        (f.films + f.crime + f.docs).filter { it.channel == ch.channel }.distinctBy { it.id }
+            .sortedByDescending { it.image != null }.take(20)
+    }
+    val series = remember(ch, f) { (f.series + f.filmSeries).filter { it.channel == ch.channel }.take(20) }
+    Column(modifier.fillMaxHeight().padding(end = PAGE_PADDING)) {
+        Box(
+            Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(14.dp))
+                .background(Brush.linearGradient(listOf(TvColors.channel(ch.channel), TvColors.channel(ch.channel).copy(alpha = 0.4f))))
+                .padding(22.dp)
         ) {
-            gridItems(live, key = { it.name }) { ch ->
-                val key = "live|${ch.name}"
-                LiveCard(ch, Modifier.restoreFocus(key, ui.focusKey, enabled = app.restorePending,
-                    onRestored = { app.restorePending = false }) { ui.focusKey = it }) { nav.open(LiveTile(ch)) }
+            Column(Modifier.align(Alignment.CenterStart)) {
+                Text(ch.name, color = Color.White, fontSize = 34.sp, fontWeight = FontWeight.Bold)
+                Text(if (playable) "Jetzt live" else onlyIn(ch), color = Color.White.copy(alpha = 0.85f), fontSize = 15.sp)
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Chip("▶  Live ansehen", selected = true) { nav.open(LiveTile(ch)) }
+            if (!playable) Text(
+                "Dein Internetanschluss ist in ${Geo.name(app.detected ?: app.country)} – dieser Sender startet von dort vermutlich nicht.",
+                color = TvColors.TextMuted, fontSize = 12.sp)
+        }
+        Spacer(Modifier.height(16.dp))
+        if (videos.isNotEmpty() || series.isNotEmpty()) {
+            Text("Aus der Mediathek von ${displayChannel(ch.channel)}", color = TvColors.Text, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(8.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                items(series, key = { "s" + it.id }) { s -> SeriesCard(s, app.country, app.sinceVisit, Modifier.width(CARD_WIDTH)) { nav.open(SeriesTile(s)) } }
+                items(videos, key = { "v" + it.id }) { v -> VideoCard(v, overlineOf(v), v.title, app.sinceVisit, Modifier.width(CARD_WIDTH)) { nav.open(VideoTile(v, overlineOf(v))) } }
             }
         }
     }
 }
+
+/** items mit Index (für die Sendernummern). */
+private inline fun <T> androidx.compose.foundation.lazy.LazyListScope.itemsIndexedCompat(
+    list: List<T>, crossinline content: @Composable (Int, T) -> Unit,
+) = items(list.size) { i -> content(i, list[i]) }
 
 // ============================================================================
 // Suche
@@ -310,8 +381,8 @@ fun SearchField(value: String, modifier: Modifier, onChange: (String) -> Unit, o
 @Composable
 fun SettingsPage(app: AppState, onCheckUpdate: () -> Unit) {
     Column(Modifier.fillMaxSize().padding(horizontal = PAGE_PADDING, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
-        Section("Land", "Bestimmt, welche Sendungen angezeigt werden. Ob etwas abspielbar ist, entscheidet aber dein " +
-            "Internetanschluss – erkannt: ${app.detected?.let { Geo.name(it) } ?: "–"}. Empfohlen: Automatisch.") {
+        Section("Land", "Zeigt das Senderangebot dieses Landes – dessen Sender zuerst. Ob ein Sender startet, entscheidet " +
+            "dein Internetanschluss (erkannt: ${app.detected?.let { Geo.name(it) } ?: "–"}); solche Sender sind markiert.") {
             Chip("Automatisch", app.chosen == null) { app.setCountry(null) }
             Geo.countries.forEach { c -> Chip(Geo.name(c), app.chosen == c) { app.setCountry(c) } }
         }

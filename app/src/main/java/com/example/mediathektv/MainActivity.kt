@@ -14,6 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -142,8 +147,7 @@ private fun App() {
 
     Box(Modifier.fillMaxSize().background(TvColors.Background)) {
         when (val screen = stack.last()) {
-            Screen.Main -> Column(Modifier.fillMaxSize()) {
-                TopBar(app)
+            Screen.Main -> SideMenu(app) {
                 MainContent(app, nav,
                     onSearch = { scope.launch { app.runSearch() } },
                     onRetry = { scope.launch { app.start() } },
@@ -159,35 +163,64 @@ private fun App() {
     app.update?.let { UpdateDialog(it) { app.update = null } }
 }
 
-/** Menüleiste oben: Rubriken wechseln beim Daraufgehen (wie bei TV-Oberflächen üblich). */
+/** Symbol je Rubrik. */
+private val Tab.icon: ImageVector get() = when (this) {
+    Tab.START -> Icons.Outlined.Home
+    Tab.LIVE -> Icons.Outlined.LiveTv
+    Tab.SERIEN -> Icons.Outlined.Tv
+    Tab.FILME -> Icons.Outlined.Movie
+    Tab.KRIMIS -> Icons.Outlined.Fingerprint
+    Tab.DOKUS -> Icons.Outlined.Public
+    Tab.LISTE -> Icons.Outlined.BookmarkBorder
+    Tab.SUCHE -> Icons.Outlined.Search
+    Tab.SETTINGS -> Icons.Outlined.Settings
+}
+
+/**
+ * Seitenleiste links wie bei TiviMate: eingeklappt nur Symbole, mit "Links" klappt sie auf.
+ * Die Rubrik wechselt, sobald man daraufgeht.
+ */
 @Composable
-internal fun TopBar(app: AppState) {
-    Row(Modifier.fillMaxWidth().padding(start = PAGE_PADDING, end = PAGE_PADDING, top = 16.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(28.dp).clip(RoundedCornerShape(7.dp)).background(TvColors.Accent), contentAlignment = Alignment.Center) {
-            Text("▶", color = Color.White, fontSize = 13.sp)
-        }
-        Spacer(Modifier.width(10.dp))
-        Text("Mediathek", color = TvColors.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.width(28.dp))
-        TabRow(selectedTabIndex = app.tab.ordinal) {
-            Tab.entries.forEach { t ->
-                Tab(
-                    selected = app.tab == t,
-                    onFocus = { app.tab = t },
-                    onClick = { app.tab = t },
-                    colors = TabDefaults.pillIndicatorTabColors(
-                        contentColor = TvColors.TextMuted,
-                        selectedContentColor = TvColors.Text,
-                        focusedContentColor = TvColors.Background,
-                        focusedSelectedContentColor = TvColors.Background,
-                    ),
-                ) {
-                    Text(t.label, fontSize = 14.sp, fontWeight = FontWeight.Medium,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp))
+internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
+    ModalNavigationDrawer(
+        drawerContent = { open ->
+            Column(
+                Modifier.fillMaxHeight().background(
+                    Brush.horizontalGradient(listOf(TvColors.Surface, TvColors.Surface.copy(alpha = if (open == DrawerValue.Open) 0.97f else 0.0f)))
+                ).padding(horizontal = 10.dp, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Row(Modifier.padding(start = 8.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(TvColors.Accent), contentAlignment = Alignment.Center) {
+                        Text("▶", color = Color.White, fontSize = 14.sp)
+                    }
+                    if (open == DrawerValue.Open) {
+                        Spacer(Modifier.width(10.dp))
+                        Text("Mediathek", color = TvColors.Text, fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Tab.entries.forEach { t ->
+                    NavigationDrawerItem(
+                        selected = app.tab == t,
+                        onClick = { app.tab = t },
+                        leadingContent = { Icon(t.icon, contentDescription = null) },
+                        modifier = Modifier.onFocusChanged { if (it.isFocused) app.tab = t },
+                        colors = NavigationDrawerItemDefaults.colors(
+                            contentColor = TvColors.TextMuted,
+                            selectedContentColor = TvColors.Text,
+                            selectedContainerColor = TvColors.SurfaceHigh,
+                            focusedContainerColor = Color.White,
+                            focusedContentColor = TvColors.Background,
+                            focusedSelectedContainerColor = Color.White,
+                            focusedSelectedContentColor = TvColors.Background,
+                        ),
+                    ) { Text(t.label, fontSize = 15.sp) }
                 }
             }
-        }
+        },
+        scrimBrush = Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)),
+    ) {
+        Box(Modifier.fillMaxSize().padding(start = RAIL_WIDTH)) { content() }
     }
 }
 
@@ -204,7 +237,7 @@ internal fun MainContent(app: AppState, nav: Nav, onSearch: () -> Unit, onRetry:
         return
     }
     when (tab) {
-        Tab.LIVE -> LivePage(app, nav)
+        Tab.LIVE -> TvPage(app, nav)
         Tab.LISTE -> ShelfPage(app, tab, personalShelves(tab), nav,
             empty = "Noch nichts gemerkt. In den Details „+ Meine Liste“ wählen – angefangene Sendungen erscheinen hier automatisch.")
         else -> {

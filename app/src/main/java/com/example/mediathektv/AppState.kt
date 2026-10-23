@@ -22,10 +22,10 @@ import java.util.Locale
 // Navigation
 // ============================================================================
 
-/** Rubriken der Menüleiste. */
+/** Rubriken der Seitenleiste (Reihenfolge = Anzeige). */
 enum class Tab(val label: String) {
-    START("Start"), FILME("Filme"), SERIEN("Serien"), KRIMIS("Krimis"), DOKUS("Dokus"),
-    LIVE("Live-TV"), LISTE("Meine Liste"), SUCHE("Suche"), SETTINGS("Einstellungen"),
+    START("Start"), LIVE("TV-Sender"), SERIEN("Serien"), FILME("Filme"), KRIMIS("Krimis"), DOKUS("Dokus"),
+    LISTE("Meine Liste"), SUCHE("Suche"), SETTINGS("Einstellungen"),
 }
 
 sealed interface Screen {
@@ -81,6 +81,7 @@ data class Preview(val overline: String, val title: String, val meta: String, va
 
 /** Zustand einer Rubrik-Seite (Fokus, Scrollpositionen, Vorschau) – bleibt beim Wechseln erhalten. */
 class PageUi {
+    var selectedChannel by mutableStateOf<LiveChannel?>(null)   // TV-Sender-Seite
     var focusKey by mutableStateOf<String?>(null)
     var preview by mutableStateOf<Preview?>(null)
     val column = LazyListState()
@@ -158,10 +159,13 @@ class AppState(context: Context) {
         Filtered(
             i.films.mapNotNull { it.forCountry(c) }, i.crime.mapNotNull { it.forCountry(c) }, i.docs.mapNotNull { it.forCountry(c) },
             i.series.filter { it.availableIn(c) }, i.filmSeries.filter { it.availableIn(c) }, i.docSeries.filter { it.availableIn(c) },
-            // SRF gibt Livestreams nur für Schweizer Internetanschlüsse frei – sonst gar nicht erst anzeigen
-            i.live.filter { it.srgUrn.isBlank() || detected == null || detected == "CH" },
+            // Senderangebot des gewählten Landes, dessen eigene Sender zuerst
+            i.live.filter { it.availableIn(c) }.sortedBy { if (it.homeCountry == c) 0 else 1 },
         )
     }
+
+    /** Läuft der Sender über den aktuellen Internetanschluss? (Die Länderwahl ändert daran nichts.) */
+    fun playableHere(ch: LiveChannel) = ch.availableIn(detected ?: country)
 
     fun setCountry(code: String?) {
         chosen = code

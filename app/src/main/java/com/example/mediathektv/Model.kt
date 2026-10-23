@@ -51,7 +51,24 @@ private val keyChars = Regex("[^a-z0-9äöüß]")
 internal fun keyNorm(s: String) = s.lowercase().replace(keyChars, "")
 
 /** Ein Live-Sender. SRF-Streams ([srgUrn]) werden erst beim Abspielen aufgelöst (Freigabe nur in der Schweiz). */
-data class LiveChannel(val name: String, val channel: String, val url: String = "", val altUrl: String = "", val srgUrn: String = "")
+data class LiveChannel(val name: String, val channel: String, val url: String = "", val altUrl: String = "", val srgUrn: String = "") {
+    /** Heimatland des Senders – dessen Sender stehen in der Senderliste des Landes oben. */
+    val homeCountry: String get() = when (channel) { "SRF" -> "CH"; "ORF" -> "AT"; else -> "DE" }
+
+    /**
+     * In welchen Ländern der Stream läuft – abgeleitet aus der Adresse:
+     * SRF nur Schweiz, ORF nur Österreich, "…/dach/…" Deutschland/Österreich/Schweiz,
+     * reine Deutschland-Fassungen ("…/de/…") nur Deutschland, außer es gibt eine internationale Ersatzfassung.
+     */
+    fun availableIn(country: String): Boolean = when {
+        srgUrn.isNotBlank() -> country == "CH"
+        url.contains("ors.at") -> country == "AT"
+        url.contains("/dach/") -> country in setOf("DE", "AT", "CH")
+        altUrl.isNotBlank() -> true
+        url.contains("/de/") || url.contains("geo") -> country == "DE"
+        else -> true
+    }
+}
 
 data class Episode(val season: Int?, val number: Int) {
     val label: String get() = if (season != null) "S$season · E$number" else "Folge $number"

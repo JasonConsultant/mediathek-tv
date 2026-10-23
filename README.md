@@ -15,6 +15,15 @@ Stand des Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
 | Dokumentationen | ~2.000 |
 | Doku-Reihen (Terra X, 37 Grad …) | ~300 |
 
+## Aufbau
+Seitenleiste links (wie TiviMate): **Start · TV-Sender · Serien · Filme · Krimis · Dokus · Meine Liste · Suche · Einstellungen**.
+Jede Rubrik hat eigene Reihen (z.B. Filme nach Genre und Sender). **TV-Sender** zeigt die Senderliste links,
+rechts den gewählten Sender mit Live-Stream und seinen Sendungen aus der Mediathek.
+
+**Land** (Einstellungen): zeigt das Senderangebot dieses Landes – Schweiz mit SRF zuerst, Deutschland mit
+ARD/ZDF zuerst, Österreich mit ORF zuerst. Ob ein Sender startet, entscheidet der Internetanschluss;
+Sender, die über den eigenen Anschluss nicht laufen, sind mit „nur CH/AT/DE“ markiert.
+
 ## Funktionen
 - **Weiterschauen:** Die App merkt sich, wo du aufgehört hast. Gesehene Sendungen bekommen einen Haken,
   nach einer Folge startet die nächste mit 10 Sekunden Countdown (OK = sofort, Zurück = beenden)
