@@ -276,6 +276,7 @@ class AppState(context: Context) {
 // ============================================================================
 
 const val DAY = 24 * 3600L
+const val MENU_SWITCH_DELAY = 120L                 // ms Ruhe auf einem Menüpunkt, bis die Seite wechselt
 const val CHECK_INTERVAL = 60 * 60 * 1000L        // höchstens stündlich im Netz nachsehen
 const val UPDATE_INTERVAL = 6 * 60 * 60 * 1000L   // App-Updates alle 6 Stunden prüfen
 const val SYNC_TICK = 15 * 60 * 1000L             // solange offen: alle 15 Minuten

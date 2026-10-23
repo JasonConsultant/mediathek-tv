@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+@file:OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 
 package com.example.mediathektv
 
@@ -15,6 +15,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.rememberScrollState
@@ -190,13 +192,21 @@ private val Tab.icon: ImageVector get() = when (this) {
 }
 
 /**
- * Seitenleiste links wie bei TiviMate: eingeklappt nur Symbole, mit "Links" klappt sie auf.
- * Die Rubrik wechselt, sobald man daraufgeht.
+ * Seitenleiste links wie bei TiviMate: eingeklappt nur Symbole, mit "Links" klappt sie auf –
+ * und zwar immer auf der aktuellen Rubrik. Die Seite wechselt erst, wenn der Fokus kurz auf
+ * einem Punkt ruht; so bleibt das Durchblättern flüssig, auch bei schweren Seiten.
  */
 @Composable
 internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
     val focus = LocalFocusManager.current
     val scope = rememberCoroutineScope()
+    val requesters = remember { Tab.entries.associateWith { FocusRequester() } }
+    var hovered by remember { mutableStateOf<Tab?>(null) }
+    LaunchedEffect(hovered) {
+        val t = hovered ?: return@LaunchedEffect
+        delay(MENU_SWITCH_DELAY)
+        app.tab = t
+    }
     ModalNavigationDrawer(
         drawerContent = { open ->
             Column(
@@ -211,6 +221,7 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                         // OK: Rubrik öffnen – der Fokus springt auf die gemerkte Kachel der Seite, das Menü schließt sich.
                         // Falls diese Kachel gerade nicht aufgebaut ist (weit gescrollt), einfach nach rechts auf die Seite.
                         onClick = {
+                            hovered = null
                             app.tab = t
                             app.restoreFocus()
                             scope.launch {
@@ -219,8 +230,15 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                             }
                         },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
-                        modifier = Modifier.onFocusChanged {
-                            if (it.isFocused) { app.menuFocused = true; app.pageFocused = false; app.tab = t }
+                        modifier = Modifier.focusRequester(requesters.getValue(t)).onFocusChanged {
+                            if (!it.isFocused) return@onFocusChanged
+                            val entering = !app.menuFocused          // von der Seite her ins Menü gekommen
+                            app.menuFocused = true
+                            app.pageFocused = false
+                            if (entering && t != app.tab) {
+                                // "Links" landet auf dem Punkt auf gleicher Höhe – wir wollen die aktuelle Rubrik
+                                scope.launch { withFrameNanos { }; runCatching { requesters.getValue(app.tab).requestFocus() } }
+                            } else hovered = t
                         },
                         colors = NavigationDrawerItemDefaults.colors(
                             contentColor = TvColors.TextMuted,

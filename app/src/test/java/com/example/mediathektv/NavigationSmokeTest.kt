@@ -16,6 +16,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowLooper
+import java.util.concurrent.TimeUnit
 
 /**
  * Drückt die Fernbedienungstasten auf der Hauptansicht durch (Robolectric, ohne Gerät):
@@ -54,6 +56,9 @@ class NavigationSmokeTest {
         rule.onRoot().performKeyPress(KeyEvent(NativeKeyEvent(ACTION_DOWN, code)))
         rule.onRoot().performKeyPress(KeyEvent(NativeKeyEvent(ACTION_UP, code)))
         rule.waitForIdle()
+        // kurze Ruhe wie beim echten Drücken – danach darf das Menü die Seite wechseln
+        ShadowLooper.idleMainLooper(MENU_SWITCH_DELAY + 50, TimeUnit.MILLISECONDS)
+        rule.waitForIdle()
     }
 
     @Test fun remoteKeysDoNotCrash() {
@@ -83,14 +88,19 @@ class NavigationSmokeTest {
         assertNotEquals("Runter wechselt die Reihe", first!!.substringBefore('|'), start.focusKey!!.substringBefore('|'))
         repeat(3) { press(KEYCODE_DPAD_RIGHT) }
         repeat(2) { press(KEYCODE_DPAD_UP) }
-        // Links bis ins Menü, dort durch alle Rubriken (jede baut ihre Seite auf)
+        // Links ins Menü, dort durch alle Rubriken (jede baut ihre Seite auf)
         repeat(6) { press(KEYCODE_DPAD_LEFT) }
         assertTrue("Menü hat den Fokus", app.menuFocused)
+        assertEquals("Links landet auf der aktuellen Rubrik, nicht auf dem Punkt auf gleicher Höhe", Tab.START, app.tab)
         press(KEYCODE_DPAD_DOWN)
         assertNotEquals("Runter im Menü wechselt die Rubrik", Tab.START, app.tab)
         assertTrue("Menü bleibt offen (Seite holt den Fokus nicht zurück)", app.menuFocused)
         repeat(Tab.entries.size) { press(KEYCODE_DPAD_DOWN) }
         assertEquals(Tab.SETTINGS, app.tab)
+        // Vier Schritte hoch: Krimis – die Seite jeder Rubrik dazwischen wurde aufgebaut, ohne zu stören
+        repeat(4) { press(KEYCODE_DPAD_UP) }
+        assertEquals(Tab.KRIMIS, app.tab)
+        repeat(4) { press(KEYCODE_DPAD_DOWN) }
         repeat(Tab.entries.size) { press(KEYCODE_DPAD_UP) }
         assertEquals(Tab.START, app.tab)
         // Menü: Runter auf TV-Sender, OK öffnet die Seite; dort blättern und zurück ins Menü
