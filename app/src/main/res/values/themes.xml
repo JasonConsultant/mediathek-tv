@@ -1,0 +1,5 @@
+<resources>
+    <style name="Theme.MediathekTV" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#0B1324</item>
+    </style>
+</resources>
