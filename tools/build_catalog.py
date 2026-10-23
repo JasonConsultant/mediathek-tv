@@ -465,7 +465,37 @@ def _og_image(page_url):
     url = html.unescape((m.group(1) or m.group(2)).decode("utf-8", "replace"))
     return url if url.startswith("http") and not BAD_IMAGE.search(url) else None
 
-def find_image(web):
+ARD_FAMILY = {"ARD", "ONE", "ARD-alpha", "BR", "HR", "MDR", "NDR", "RBB", "SR", "SWR", "WDR", "tagesschau24", "PHOENIX", "Radio Bremen TV"}
+
+def ard_search(title):
+    """Ausweg, wenn die Sendungsseite nicht mehr existiert: Suche der ARD-Mediathek.
+    Nur eindeutige Titel-Treffer werden übernommen (lieber kein Bild als ein falsches)."""
+    want = norm(title)
+    if len(want) < 6:
+        return None
+    url = "https://api.ardmediathek.de/search-system/search/vods/ard?pageSize=5&platform=MEDIA_THEK&query=" + urllib.parse.quote(title)
+    for t in json.loads(_get(url)).get("teasers", []):
+        names = [norm(t.get(k) or "") for k in ("mediumTitle", "shortTitle", "longTitle")]
+        if any(n == want or (len(want) >= 10 and n.endswith(want)) for n in names):
+            src = ((t.get("images") or {}).get("aspect16x9") or {}).get("src")
+            if src:
+                return src.replace("{width}", str(IMAGE_WIDTH))
+    return None
+
+def find_image(web, title="", channel=""):
+    """Bild zur Sendungsseite; bei ARD-Sendern mit verschwundener Seite über die ARD-Suche."""
+    error = None
+    try:
+        img = find_image_on_page(web)
+    except Exception as e:
+        img, error = None, e
+    if not img and channel in ARD_FAMILY and title:
+        img = ard_search(title)
+    if not img and error:
+        raise error
+    return img
+
+def find_image_on_page(web):
     """Kleines Vorschaubild (~480 px) zur Sendungsseite, je nach Plattform."""
     host = urllib.parse.urlparse(web).netloc
     if "srf.ch" in host:
@@ -491,7 +521,7 @@ def find_image(web):
         img = re.sub(r"/\d+x\d+(\?.*)?$", "/480x270", img)
     return img
 
-IMAGE_CACHE_VERSION = 3   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
+IMAGE_CACHE_VERSION = 4   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
 
 def load_image_cache(prev_dir):
     path = prev_dir and os.path.join(prev_dir, "images.json.gz")
@@ -509,25 +539,27 @@ def assign_images(cat, cache):
     # Reihenfolge = Priorität: erst ein Titelbild je Serie, dann Filme/Krimis/Dokus, dann Ersatzkandidaten
     targets = {}                                   # Schlüssel -> Website
     groups = ("series", "filmSeries", "docSeries")
+    def target(o): return (o["_w"], o.get("n", ""), o.get("c", ""))
     for group in groups:
         for s in cat[group]:
             e = max(s["e"], key=lambda e: e["ts"])
-            if e.get("_w"): targets.setdefault(fs_key(e), e["_w"])
+            if e.get("_w"): targets.setdefault(fs_key(e), target(e))
     for key in ("films", "crime", "docs"):
         for o in cat[key]:
-            if o.get("_w"): targets.setdefault(fs_key(o), o["_w"])
+            if o.get("_w"): targets.setdefault(fs_key(o), target(o))
     for group in groups:
         for s in cat[group]:
             for e in sorted(s["e"], key=lambda e: -e["ts"])[1:3]:   # weitere neueste Folgen als Ersatz
-                if e.get("_w"): targets.setdefault(fs_key(e), e["_w"])
+                if e.get("_w"): targets.setdefault(fs_key(e), target(e))
 
     todo = [k for k in targets if k not in cache or (not cache[k][0] and NOW - cache[k][1] > 7 * 86400)]
     todo = todo[:MAX_NEW_IMAGES]
     problems = Counter()                           # Auswertung: warum keine Bilder?
     def work(k):
-        host = urllib.parse.urlparse(targets[k]).netloc
+        web, title, channel = targets[k]
+        host = urllib.parse.urlparse(web).netloc
         try:
-            img = find_image(targets[k]) or ""
+            img = find_image(web, title, channel) or ""
             if not img: problems[f"{host}: kein Bild auf der Seite"] += 1
             return k, img
         except Exception as e:
@@ -546,15 +578,23 @@ def assign_images(cat, cache):
     def img_of(o):
         c = cache.get(fs_key(o))
         return c[0] if c and c[0] else None
-    for key in ("films", "crime", "docs"):
-        for o in cat[key]:
-            if (im := img_of(o)): o["im"] = im
+    covers = {}
     for group in ("series", "filmSeries", "docSeries"):
         for s in cat[group]:
             for e in s["e"]:
                 if (im := img_of(e)): e["im"] = im
             cover = next((e["im"] for e in sorted(s["e"], key=lambda e: -e["ts"]) if e.get("im")), None)
-            if cover: s["im"] = cover
+            if cover:
+                s["im"] = cover
+                covers.setdefault(s["n"].lower(), cover)
+    fallback = 0
+    for key in ("films", "crime", "docs"):
+        for o in cat[key]:
+            im = img_of(o) or covers.get(STAFFEL_SUFFIX.sub("", o.get("t", "")).strip().lower())   # z.B. Tatort-Reihenbild
+            if im:
+                o["im"] = im
+                fallback += not img_of(o)
+    print(f"Bilder: {fallback} Sendungen zeigen das Bild ihrer Reihe", file=sys.stderr)
     # Cache klein halten: nur, was noch im Katalog ist
     return {k: v for k, v in cache.items() if k in targets}
 
