@@ -33,6 +33,9 @@ data class Video(
     /** Alle Fassungen inklusive dieser, Deutsch zuerst. */
     val versions: List<Video> get() = listOf(this) + variants
 
+    /** Bleibt über Katalog-Läufe gleich (URLs ändern sich) – für Fortschritt, Gesehen, Merkliste. */
+    val stableKey: String get() = "${keyNorm(topic)}|${keyNorm(title)}|${episode?.season}|${episode?.number}"
+
     fun availableIn(country: String): Boolean =
         source.playableIn(country) || alternatives.any { it.playableIn(country) }
 
@@ -42,6 +45,12 @@ data class Video(
         return copy(source = src, variants = variants.mapNotNull { it.forCountry(country) }, alternatives = emptyList())
     }
 }
+
+private val keyChars = Regex("[^a-z0-9äöüß]")
+internal fun keyNorm(s: String) = s.lowercase().replace(keyChars, "")
+
+/** Ein Live-Sender. SRF-Streams ([srgUrn]) werden erst beim Abspielen aufgelöst (Freigabe nur in der Schweiz). */
+data class LiveChannel(val name: String, val channel: String, val url: String = "", val altUrl: String = "", val srgUrn: String = "")
 
 data class Episode(val season: Int?, val number: Int) {
     val label: String get() = if (season != null) "S$season · E$number" else "Folge $number"

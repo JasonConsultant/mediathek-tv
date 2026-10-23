@@ -4,7 +4,7 @@ Android-TV-App mit Filmen, Serien, Krimis und Dokus aus allen frei verfügbaren 
 Mediatheken: ARD, ZDF, ARTE, 3sat, ORF, SRF und die Dritten. Die App zeigt keine Sender-Logos.
 
 ## Was drin ist
-Stand des täglichen Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
+Stand des Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
 
 | Reihe | Umfang |
 |---|---|
@@ -16,6 +16,12 @@ Stand des täglichen Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
 | Doku-Reihen (Terra X, 37 Grad …) | ~300 |
 
 ## Funktionen
+- **Weiterschauen:** Die App merkt sich, wo du aufgehört hast. Gesehene Sendungen bekommen einen Haken,
+  nach einer Folge startet die nächste mit 10 Sekunden Countdown (OK = sofort, Zurück = beenden)
+- **Meine Liste:** Filme und Serien für später merken
+- **Live-TV:** über 40 Sender, darunter SRF 1, SRF zwei, SRF info, Das Erste, ZDF, 3sat, ARTE, ORF und die Dritten
+- **Neu:** NEU-Abzeichen seit dem letzten Besuch sowie die Reihen „Neu seit gestern“ und „Neue Folgen“
+- **Automatisch aktuell:** Der Katalog wird alle 3 Stunden erneuert und von der App im Hintergrund geladen
 - **Startseite** mit sechs Reihen, jeweils mit „Alle anzeigen“ (Raster mit Filtern nach Sender und Genre sowie Sortierung)
 - **Serien:** Staffeln zusammengeführt, Folgen sortiert, Staffel-Filter
 - **Detailansicht** mit Genre, Jahr, Dauer, Sender und Sendedatum
@@ -24,7 +30,7 @@ Stand des täglichen Katalogs, abspielbar in der Schweiz (in Deutschland mehr):
   Ist eine Sendung in mehreren Fassungen mit unterschiedlicher Freigabe vorhanden, wird automatisch
   die passende genommen. Das Land lässt sich oben über „Land: …“ wechseln.
 - **Suche** sofort im Katalog und zusätzlich live in allen Mediatheken
-- **Automatische Updates** der App über GitHub Releases
+- **App-Updates** werden automatisch angeboten, zusätzlich gibt es den Knopf „Nach Updates suchen“
 
 ## Wie es funktioniert
 ```
@@ -58,8 +64,10 @@ Talk, Sport, Kochen und Kinderprogramm werden aussortiert.
 ## Workflows
 | Workflow | Wann | Was |
 |---|---|---|
-| Katalog aktualisieren | täglich, bei Änderungen am Generator, manuell | baut den Katalog, Branch `catalog` |
-| Build & Release APK | bei Änderungen an der App, manuell | baut die APK, Release `v1.<Nummer>` |
+| Katalog aktualisieren | alle 3 Stunden, bei Änderungen am Generator, manuell | baut den Katalog, Branch `catalog` |
+| Build & Release APK | bei Änderungen an der App, manuell | baut und signiert die APK, Release `v2-<Nummer>` |
+
+Der Signierschlüssel liegt nur in den GitHub-Secrets `KEYSTORE_BASE64` und `KEYSTORE_PASSWORD`, nicht im Repo.
 
 Die App prüft beim Start auf neue Releases und bietet die Installation an.
 
@@ -76,6 +84,9 @@ APK aus dem neuesten Release auf einen USB-Stick kopieren und am Fernseher mit e
 | `Api.kt` | Live-Suche |
 | `MainActivity.kt` | Oberfläche |
 | `PlayerActivity.kt` | Player mit Untertiteln |
+| `Library.kt` | Weiterschauen, Gesehen, Merkliste (auf dem Gerät) |
+| `LiveTv.kt` | SRF-Livestreams (Freigabe über die SRG-Schnittstelle) |
+| `CatalogRefreshWorker.kt` | Nachladen im Hintergrund |
 | `Updater.kt` | App-Updates |
 
 Katalog lokal bauen: `pip install scikit-learn && python3 tools/build_catalog.py --out catalog`

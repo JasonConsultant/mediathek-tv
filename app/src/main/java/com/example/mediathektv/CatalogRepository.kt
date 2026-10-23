@@ -21,6 +21,7 @@ data class CatalogIndex(
     val series: List<SeriesInfo>,
     val filmSeries: List<SeriesInfo>,
     val docSeries: List<SeriesInfo>,
+    val live: List<LiveChannel> = emptyList(),
 )
 
 /**
@@ -98,6 +99,7 @@ object CatalogParser {
         var generated = 0L
         var films = emptyList<Video>(); var crime = emptyList<Video>(); var docs = emptyList<Video>()
         var series = emptyList<SeriesInfo>(); var filmSeries = emptyList<SeriesInfo>(); var docSeries = emptyList<SeriesInfo>()
+        var live = emptyList<LiveChannel>()
         r.beginObject()
         while (r.hasNext()) {
             when (r.nextName()) {
@@ -108,11 +110,12 @@ object CatalogParser {
                 "series" -> series = seriesList(r)
                 "filmSeries" -> filmSeries = seriesList(r)
                 "docSeries" -> docSeries = seriesList(r)
+                "live" -> live = liveList(r)
                 else -> r.skipValue()
             }
         }
         r.endObject()
-        CatalogIndex(generated, films, crime, docs, series, filmSeries, docSeries)
+        CatalogIndex(generated, films, crime, docs, series, filmSeries, docSeries, live)
     }
 
     fun parseEpisodes(input: InputStream): List<Video> = reader(input).use { r ->
@@ -121,6 +124,28 @@ object CatalogParser {
         while (r.hasNext()) if (r.nextName() == "e") eps = videos(r) else r.skipValue()
         r.endObject()
         eps
+    }
+
+    /** Eine einzelne Sendung/Serie im Katalogformat (für gespeicherte Bibliothekseinträge). */
+    fun parseVideo(json: String): Video = JsonReader(java.io.StringReader(json)).use { video(it) }
+    fun parseSeries(json: String): SeriesInfo = JsonReader(java.io.StringReader("[$json]")).use { seriesList(it).first() }
+
+    private fun liveList(r: JsonReader): List<LiveChannel> {
+        val out = ArrayList<LiveChannel>()
+        r.beginArray()
+        while (r.hasNext()) {
+            var name = ""; var ch = ""; var url = ""; var alt = ""; var urn = ""
+            r.beginObject()
+            while (r.hasNext()) when (r.nextName()) {
+                "n" -> name = r.nextString(); "c" -> ch = r.nextString(); "u" -> url = r.nextString()
+                "alt" -> alt = r.nextString(); "srg" -> urn = r.nextString()
+                else -> r.skipValue()
+            }
+            r.endObject()
+            out.add(LiveChannel(name, ch, url, alt, urn))
+        }
+        r.endArray()
+        return out
     }
 
     /** Akzeptiert gzip-komprimierte und unkomprimierte Daten. */
@@ -145,7 +170,7 @@ object CatalogParser {
         var id = ""; var ch = ""; var topic = ""; var title = ""; var desc = ""
         var secs = 0; var ts = 0L; var url = ""; var sub = ""; var geo = ""
         var year: Int? = null; var genre: String? = null; var season: Int? = null; var ep: Int? = null; var fs = 0L
-        var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>()
+        var variants = emptyList<Pair<String, Source>>(); var alts = emptyList<Source>(); var lang = "Deutsch"
         r.beginObject()
         while (r.hasNext()) {
             when (r.nextName()) {
@@ -164,6 +189,7 @@ object CatalogParser {
                 "se" -> season = r.nextInt()
                 "ep" -> ep = r.nextInt()
                 "fs" -> fs = r.nextLong()
+                "l" -> lang = r.nextString()
                 "v" -> variants = list(r) { lang, src -> lang to src }
                 "a" -> alts = list(r) { _, src -> src }
                 else -> r.skipValue()
@@ -173,7 +199,7 @@ object CatalogParser {
         val main = Video(
             id = id, channel = ch, topic = topic, title = title, description = desc, duration = secs,
             timestamp = ts, source = Source(url, sub, geo), year = year, genre = genre,
-            episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs,
+            episode = ep?.let { Episode(season, it) }, alternatives = alts, firstSeen = fs, language = lang,
         )
         return main.copy(variants = variants.mapIndexed { i, (lang, src) ->
             main.copy(id = "$id-$i", language = lang, source = src, alternatives = emptyList())
