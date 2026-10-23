@@ -19,6 +19,28 @@ object Net {
 }
 
 /**
+ * Ist die Videodatei beim Sender noch da? Die Filmliste enthält auch Sendungen, die der Sender längst
+ * gelöscht hat. Eine kurze HEAD-Anfrage vom Gerät aus (also aus dem richtigen Land) klärt das.
+ * true = da, false = weg (403/404/410), null = nicht feststellbar (Netzfehler, anderer Status).
+ */
+object Availability {
+    private val cache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+
+    suspend fun check(url: String): Boolean? = cache[url] ?: withContext(Dispatchers.IO) {
+        runCatching {
+            val req = Request.Builder().url(url).head().header("User-Agent", "Mozilla/5.0 (MediathekTV)").build()
+            Net.client.newCall(req).execute().use { r ->
+                when (r.code) {
+                    in 200..399 -> true
+                    403, 404, 410 -> false
+                    else -> null
+                }
+            }
+        }.getOrNull()?.also { cache[url] = it }
+    }
+}
+
+/**
  * Live-Suche über den kompletten Index (MediathekViewWeb-API) – findet auch, was nicht im
  * Katalog ist. Die API liefert keine Geo-Freigabe; solche Treffer sind mit geoKnown = false markiert.
  */

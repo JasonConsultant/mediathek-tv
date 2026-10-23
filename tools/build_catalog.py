@@ -20,7 +20,7 @@ Dafür wird der vorherige Katalog (--previous) eingelesen und fortgeschrieben.
 
 Aufruf: python3 tools/build_catalog.py [--input Filmliste-akt.xz] [--previous alter_katalog] [--out catalog]
 """
-import argparse, glob, gzip, hashlib, html, json, lzma, os, re, shutil, sys, time, urllib.parse, urllib.request
+import argparse, glob, gzip, hashlib, html, json, lzma, os, re, shutil, sys, time, urllib.error, urllib.parse, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from collections import Counter, defaultdict
 
@@ -605,6 +605,71 @@ def strip_internal(cat):
         for s in cat[group]:
             for e in s["e"]: e.pop("_w", None)
 
+# ---------------------------------------------------------------- Noch abrufbar? (veraltete Einträge der Filmliste aussortieren)
+
+VALID_TTL = 3 * 24 * 3600      # Prüfergebnis gilt 3 Tage
+MAX_CHECKS = 4000              # pro Lauf (16 Threads, ~2 Min.); der Rest folgt in den nächsten Läufen
+SRF_URN = re.compile(r"urn:srf:video:[0-9a-f-]{36}")
+
+def probe_url(o):
+    """Was wir anfragen, um zu wissen, ob die Sendung noch existiert.
+    SRF: Datenbank-Eintrag (per URN) oder die Untertitel-Datei – die Videodatei bleibt dort auch nach dem
+    Löschen auf dem Server liegen. Alle anderen: die Videodatei selbst."""
+    if o["c"] == "SRF":
+        m = SRF_URN.search(o.get("_w") or "")
+        if m: return f"https://il.srgssr.ch/integrationlayer/2.0/mediaComposition/byUrn/{m.group(0)}.json?onlyChapters=true"
+        return o.get("ut") or o["u"]
+    return o["u"]
+
+def http_status(url):
+    req = urllib.request.Request(url, headers=UA, method="HEAD")
+    try:
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            return resp.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except Exception:
+        return 0                                           # Netzfehler: unbekannt
+
+def gone(o, status):
+    """404/410 = weg. 403 nur bei Sendungen ohne Ländersperre (gesperrte liefern vom Server aus immer 403)."""
+    if status in (404, 410): return True
+    if status == 403 and not o.get("g") and o["c"] != "SRF": return True
+    return False
+
+def load_valid_cache(prev_dir):
+    path = prev_dir and os.path.join(prev_dir, "valid.json.gz")
+    return read_gz(path) if path and os.path.exists(path) else {}
+
+def validate(cat, cache):
+    """Entfernt Sendungen, die der Sender gelöscht hat. Cache: url -> [status, geprüft_am]."""
+    items = [o for k in ("films", "crime", "docs") for o in cat[k]] + \
+            [e for g in ("series", "filmSeries", "docSeries") for s in cat[g] for e in s["e"]]
+    todo = {}
+    for o in items:
+        u = probe_url(o)
+        c = cache.get(u)
+        if c is None or NOW - c[1] > VALID_TTL or c[0] == 0:
+            todo[u] = o
+    checks = list(todo.items())[:MAX_CHECKS]
+    with ThreadPoolExecutor(16) as pool:
+        for (u, o), st in zip(checks, pool.map(lambda x: http_status(x[0]), checks)):
+            cache[u] = [st, NOW]
+    def ok(o):
+        c = cache.get(probe_url(o))
+        return c is None or not gone(o, c[0])
+    removed = 0
+    for k in ("films", "crime", "docs"):
+        keep = [o for o in cat[k] if ok(o)]; removed += len(cat[k]) - len(keep); cat[k] = keep
+    for g in ("series", "filmSeries", "docSeries"):
+        for s in cat[g]:
+            keep = [e for e in s["e"] if ok(e)]; removed += len(s["e"]) - len(keep); s["e"] = keep
+        cat[g] = [s for s in cat[g] if s["e"]]
+    live = {u: v for u, v in cache.items() if NOW - v[1] <= 14 * 24 * 3600}       # Cache klein halten
+    cache.clear(); cache.update(live)
+    print(f"Abrufbarkeit: {len(checks)} geprüft ({len(todo) - len(checks)} offen), {removed} gelöschte Sendungen entfernt",
+          file=sys.stderr)
+
 # ---------------------------------------------------------------- Live-TV
 
 LIVE_ORDER = ["SRF 1", "SRF zwei", "SRF info", "Das Erste", "ZDF", "3sat", "ARTE", "ORF 1", "ORF 2", "ORF III",
@@ -732,6 +797,7 @@ def main():
                     help="Korrekturliste (Standard: tools/corrections.json)")
     ap.add_argument("--out", default="catalog")
     ap.add_argument("--no-images", action="store_true", help="keine Vorschaubilder suchen (schneller, zum Testen)")
+    ap.add_argument("--no-check", action="store_true", help="nicht prüfen, ob die Sendungen noch abrufbar sind")
     ap.add_argument("--max-new-images", type=int, default=MAX_NEW_IMAGES)
     a = ap.parse_args()
     MAX_NEW_IMAGES = a.max_new_images
@@ -742,11 +808,15 @@ def main():
     cat = build(rows, load_corrections(a.corrections))
     cat["live"] = live
     assign_first_seen(cat, load_previous(a.previous))
+    valid = load_valid_cache(a.previous)
+    if not a.no_check: validate(cat, valid)
     images = {} if a.no_images else assign_images(cat, load_image_cache(a.previous))
     strip_internal(cat)
     size, eps = write(cat, a.out)
     if images:
         write_gz(os.path.join(a.out, "images.json.gz"), {**images, "_v": IMAGE_CACHE_VERSION})
+    if valid:
+        write_gz(os.path.join(a.out, "valid.json.gz"), valid)
     stats = {k: len(v) for k, v in cat.items() if isinstance(v, list)}
     print("Live: " + ", ".join(o["n"] for o in cat["live"]), file=sys.stderr)
     new = {k: sum(o["fs"] >= NOW - DAY for o in cat[k]) for k in ("films", "crime", "docs")}

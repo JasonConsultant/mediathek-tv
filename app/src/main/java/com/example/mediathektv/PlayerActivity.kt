@@ -23,6 +23,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.common.Tracks
 import android.app.AlertDialog
 import java.util.Locale
@@ -117,7 +118,7 @@ class PlayerActivity : ComponentActivity() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()
             }
-            override fun onPlayerError(error: PlaybackException) = onError()
+            override fun onPlayerError(error: PlaybackException) = onError(error)
         })
 
         val liveChannel = Playback.live
@@ -277,7 +278,15 @@ class PlayerActivity : ComponentActivity() {
 
     // ---------------------------------------------------------------- Fehler, Untertitel, Tasten
 
-    private fun onError() {
+    private fun onError(error: PlaybackException? = null) {
+        val v = video
+        val http = generateSequence(error as Throwable?) { it.cause }
+            .filterIsInstance<HttpDataSource.InvalidResponseCodeException>().firstOrNull()?.responseCode
+        if (v != null && http in listOf(403, 404, 410)) {
+            Library.markBroken(v)
+            toast("${v.title}: beim Sender nicht mehr verfügbar.")
+            finish(); return
+        }
         val ch = live
         if (ch != null && ch.altUrl.isNotBlank() && !triedAlternative) {   // z.B. internationale Fassung von Das Erste
             triedAlternative = true

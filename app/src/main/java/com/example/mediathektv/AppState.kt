@@ -111,7 +111,9 @@ class SeriesState(val info: SeriesInfo) {
 
     suspend fun load(repo: CatalogRepository, country: String) {
         val all = repo.episodes(info.id)
-        episodes = withContext(Dispatchers.Default) { all.mapNotNull { it.forCountry(country)?.withCover(info.image) } }
+        episodes = withContext(Dispatchers.Default) {
+            all.mapNotNull { if (Library.isBroken(it)) null else it.forCountry(country)?.withCover(info.image) }
+        }
         focusKey = visible.firstOrNull()?.id
     }
 }
@@ -161,8 +163,10 @@ class AppState(context: Context) {
     val filtered: Filtered? by derivedStateOf {
         val i = index ?: return@derivedStateOf null
         val c = country
+        val broken = Library.broken
+        fun List<Video>.usable() = mapNotNull { if (it.stableKey in broken) null else it.forCountry(c) }
         Filtered(
-            i.films.mapNotNull { it.forCountry(c) }, i.crime.mapNotNull { it.forCountry(c) }, i.docs.mapNotNull { it.forCountry(c) },
+            i.films.usable(), i.crime.usable(), i.docs.usable(),
             i.series.filter { it.availableIn(c) }, i.filmSeries.filter { it.availableIn(c) }, i.docSeries.filter { it.availableIn(c) },
             // Senderangebot des gewählten Landes, dessen eigene Sender zuerst
             i.live.filter { it.availableIn(c) }.sortedBy { if (it.homeCountry == c) 0 else 1 },

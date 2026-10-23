@@ -107,6 +107,7 @@ APK aus dem neuesten Release auf einen USB-Stick kopieren und am Fernseher mit e
 | `Api.kt` | Live-Suche |
 | `MainActivity.kt` | Oberfläche |
 | `PlayerActivity.kt` | Player mit Untertiteln |
+| `Api.kt` → `Availability` | prüft beim Öffnen einer Sendung, ob die Datei beim Sender noch da ist (HEAD vom Gerät aus) |
 | `CrashReport.kt` | Absturzbericht: wird beim nächsten Start angezeigt (abfotografieren und melden) |
 | `Library.kt` | Weiterschauen, Gesehen, Merkliste (auf dem Gerät) |
 | `LiveTv.kt` | SRF-Livestreams (Freigabe über die SRG-Schnittstelle) |
@@ -119,3 +120,11 @@ Katalog lokal bauen: `pip install scikit-learn && python3 tools/build_catalog.py
 `gradle :app:testDebugUnitTest` – neben den Parser-Tests drückt `NavigationSmokeTest` die Fernbedienungstasten
 auf der Hauptansicht durch (Robolectric, ohne Gerät): Links ins Menü, durch alle Rubriken, OK, Hoch/Runter in
 Reihen und Senderliste. Jeder Fokus-Fehler, der auf dem Fernseher abstürzen würde, fällt hier auf.
+
+## Gelöschte Sendungen
+Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entfernt hat. Dagegen zwei Stufen:
+1. **Katalogbau** (`validate` in `build_catalog.py`): HEAD-Anfrage pro Sendung (SRF: Datenbank-Eintrag per URN oder
+   Untertitel-Datei, weil die Videodatei dort liegen bleibt). 404/410 = weg; 403 nur bei Sendungen ohne Ländersperre,
+   denn gesperrte liefern vom Build-Server aus immer 403. Ergebnis 3 Tage gültig (`valid.json.gz`), max. 4000 Prüfungen je Lauf.
+2. **App**: beim Öffnen der Details eine HEAD-Anfrage vom Gerät aus (richtiges Land). Weg → Hinweis statt „Abspielen“,
+   die Sendung wird lokal gemerkt (`Library.broken`) und aus allen Reihen ausgeblendet; ebenso nach HTTP 403/404 im Player.

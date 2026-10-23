@@ -185,6 +185,13 @@ fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: Str
     }
     val progress = Library.progressOf(video)?.takeIf { it.position > 0 }
     val watched = Library.isWatched(video)
+    // Ist die Datei beim Sender noch da? (Die Filmliste enthält auch längst gelöschte Sendungen.)
+    var available by remember { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(version) {
+        available = null
+        available = Availability.check(version.url)
+        if (available == false && version.id == video.id) Library.markBroken(video)
+    }
     fun play(fromStart: Boolean) = PlayerActivity.play(
         context, version, subtitles && version.hasSubtitles, queue.orEmpty(), seriesId, seriesName, fromStart)
     val playFocus = remember { FocusRequester() }
@@ -214,10 +221,20 @@ fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: Str
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { play(fromStart = false) }, modifier = Modifier.focusRequester(playFocus),
                     colors = ButtonDefaults.colors(focusedContainerColor = Color.White, focusedContentColor = TvColors.Background)) {
-                    Text(if (progress != null) "▶  Fortsetzen (${clock(progress.position)})" else "▶  Abspielen", fontSize = 17.sp)
+                    Text(when {
+                        available == false -> "Trotzdem versuchen"
+                        progress != null -> "▶  Fortsetzen (${clock(progress.position)})"
+                        else -> "▶  Abspielen"
+                    }, fontSize = 17.sp)
                 }
                 if (progress != null) Chip("↺  Von vorne", false) { play(fromStart = true) }
                 if (version.hasSubtitles) Chip(if (subtitles) "Untertitel: An" else "Untertitel: Aus", subtitles) { subtitles = !subtitles }
+            }
+            if (available == false) {
+                Spacer(Modifier.height(10.dp))
+                Text("⚠ Diese Sendung ist beim Sender nicht mehr verfügbar" +
+                    (if (video.versions.size > 1) " – vielleicht eine andere Fassung." else ". Sie wird aus den Reihen entfernt."),
+                    color = TvColors.New, fontSize = 14.sp, fontWeight = FontWeight.Medium)
             }
             Spacer(Modifier.height(12.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {

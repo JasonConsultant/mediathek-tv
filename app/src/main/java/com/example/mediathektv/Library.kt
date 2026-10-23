@@ -38,6 +38,7 @@ object Library {
     var progress by mutableStateOf<Map<String, Progress>>(emptyMap()); private set
     var watched by mutableStateOf<Set<String>>(emptySet()); private set      // LinkedHashSet: älteste zuerst
     var list by mutableStateOf<List<ListEntry>>(emptyList()); private set     // neueste zuerst
+    var broken by mutableStateOf<Set<String>>(emptySet()); private set        // beim Sender gelöscht
 
     fun init(context: Context) {
         if (file != null) return
@@ -48,6 +49,13 @@ object Library {
     // ---------- Abfragen ----------
 
     fun isWatched(v: Video) = v.stableKey in watched
+    fun isBroken(v: Video) = v.stableKey in broken
+    fun markBroken(v: Video) {
+        if (v.stableKey in broken) return
+        broken = LinkedHashSet((broken.toList().takeLast(MAX_WATCHED - 1) + v.stableKey))
+        progress = progress - v.stableKey
+        persist()
+    }
     fun progressOf(v: Video): Progress? = progress[v.stableKey]
 
     /** Für die Reihe "Weiterschauen": angefangene Sendungen und vorgemerkte nächste Folgen. */
@@ -115,6 +123,7 @@ object Library {
             }
         })
         .put("watched", JSONArray(watched.toList()))
+        .put("broken", JSONArray(broken.toList()))
         .put("list", JSONArray().apply {
             list.forEach { e ->
                 put(JSONObject().put("k", e.key).put("a", e.added)
@@ -133,6 +142,7 @@ object Library {
             }.getOrNull()
         }.associateBy { it.key }
         watched = LinkedHashSet(o.optJSONArray("watched")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty())
+        broken = LinkedHashSet(o.optJSONArray("broken")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty())
         list = o.optJSONArray("list").objects().mapNotNull { e ->
             runCatching {
                 ListEntry(e.getString("k"), e.getLong("a"),
