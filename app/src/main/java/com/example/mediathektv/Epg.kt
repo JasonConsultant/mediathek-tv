@@ -45,7 +45,7 @@ object Epg {
                 if (resp.code == 304 || !resp.isSuccessful) return@use
                 file.parentFile?.mkdirs()
                 val tmp = File.createTempFile("epg", ".tmp", file.parentFile)
-                resp.body!!.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                resp.body!!.byteStream().use { input -> tmp.outputStream().use { copyLimited(input, it, 8L * 1024 * 1024) } }
                 val parsed = parse(tmp)
                 if (!tmp.renameTo(file)) { tmp.copyTo(file, overwrite = true); tmp.delete() }
                 resp.header("ETag")?.let { etagFile.writeText(it) }

@@ -17,8 +17,9 @@ import java.util.concurrent.TimeUnit
 class CatalogRefreshWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
     override suspend fun doWork(): Result {
-        CatalogRepository(applicationContext).refresh()   // null = unverändert oder nicht erreichbar – beides ok
-        return Result.success()
+        val repo = CatalogRepository(applicationContext)
+        repo.refresh()                                     // null = unverändert (304) oder Fehler
+        return if (repo.lastRefreshFailed && runAttemptCount < 3) Result.retry() else Result.success()
     }
 
     companion object {

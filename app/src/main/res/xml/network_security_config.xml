@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Nur HTTPS – außer für zwei Sender-Server, die kein TLS können (Adressen aus der Filmliste). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">mediastorage01.sr-online.de</domain>
+        <domain includeSubdomains="false">nrodl.zdf.de</domain>
+    </domain-config>
+</network-security-config>

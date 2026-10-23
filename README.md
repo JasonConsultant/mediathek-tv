@@ -134,3 +134,19 @@ Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entf
    Ersatzdatei, auch mitten im Player nach einem 403/404.
 2. **App**: beim Öffnen der Details eine HEAD-Anfrage vom Gerät aus (richtiges Land). Weg → Hinweis statt „Abspielen“,
    die Sendung wird lokal gemerkt (`Library.broken`) und aus allen Reihen ausgeblendet; ebenso nach HTTP 403/404 im Player.
+
+## Datenschutz und Sicherheit
+- **Verbindungen:** nur HTTPS; Klartext ist allein für zwei Sender-Server erlaubt, die kein TLS können
+  (`res/xml/network_security_config.xml`). Der Katalogbau stellt alle anderen Adressen der Filmliste auf https um.
+- **Wohin die App Daten schickt:** Katalog, Programmführer und Updates von GitHub; Suchbegriffe an
+  MediathekViewWeb (Live-Suche); einmal pro Start eine Anfrage an Cloudflare (`cdn-cgi/trace`), um das Land der
+  Internetverbindung zu erkennen (abschaltbar durch feste Landeswahl in den Einstellungen). Keine Konten, keine Kennungen,
+  keine Auswertung.
+- **Update:** nur die Datei `MediathekTV.apk` aus dem eigenen Release, nur von GitHub-Hosts, höchstens 40 MB; vor dem
+  Installer werden Paketname, Versionsnummer und Signierzertifikat mit der installierten App verglichen.
+- **Sicherung:** Fortschritt, Merkliste und Einstellungen gehen ins Android-Backup, Absturzbericht und Zwischenspeicher nicht.
+- **Lokale Daten:** `files/library.json` (Fortschritt, Gesehen, Merkliste, nicht mehr verfügbare Sendungen),
+  `files/catalog/` (Katalog, EPG), `files/crash.txt` (nur nach einem Absturz, wird nach dem Anzeigen gelöscht).
+- **Fernbedienung:** Gedrückthalten wiederholt nur das Spulen; OK, Senderwechsel und Untertitel reagieren einmal pro Druck.
+- **Downloads** sind größenbegrenzt (Katalog 64 MB, Serie 16 MB, EPG 8 MB), fehlgeschlagene Hintergrund-Abrufe werden
+  bis zu dreimal wiederholt, Deep-Links (`mediathektv://play?key=…`) werden auf Host und Schlüsselform geprüft.

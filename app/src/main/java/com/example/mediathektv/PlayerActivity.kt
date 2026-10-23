@@ -114,6 +114,8 @@ class PlayerActivity : ComponentActivity() {
         bannerParams.setMargins(64, 0, 64, 56)
         root.addView(banner, bannerParams)
         setContentView(root)
+        view.isFocusable = true
+        view.requestFocus()
 
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -364,6 +366,9 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        // Gedrückt halten: nur Spulen (Links/Rechts) darf sich wiederholen – OK, Senderwechsel, Untertitel nicht.
+        val repeating = event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0
+        if (repeating && event.keyCode != KeyEvent.KEYCODE_DPAD_LEFT && event.keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return true
         if (event.action == KeyEvent.ACTION_DOWN) {
             if (overlay.visibility == TextView.VISIBLE) {
                 when (event.keyCode) {

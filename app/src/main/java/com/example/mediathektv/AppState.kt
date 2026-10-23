@@ -44,7 +44,8 @@ object Incoming {
 
     fun handle(intent: Intent?) {
         when (intent?.action) {
-            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "mediathektv" }?.getQueryParameter("key")?.let { playKey = it }
+            Intent.ACTION_VIEW -> intent.data?.takeIf { it.scheme == "mediathektv" && it.host == "play" }
+                ?.getQueryParameter("key")?.takeIf { it.length in 3..400 && !it.contains('\n') }?.let { playKey = it }
             Intent.ACTION_SEARCH -> intent.getStringExtra(SearchManager.QUERY)?.takeIf { it.isNotBlank() }?.let { query = it }
         }
     }

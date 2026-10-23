@@ -28,11 +28,16 @@ data class CatalogIndex(
  * Lädt den Katalog von GitHub (Branch "catalog") und hält eine Kopie auf dem Gerät,
  * damit die App sofort startet und nur bei Änderungen neu lädt.
  */
+private const val MAX_INDEX_BYTES = 64L * 1024 * 1024
+private const val MAX_SERIES_BYTES = 16L * 1024 * 1024
+
 class CatalogRepository(context: Context) {
     private val base = "https://raw.githubusercontent.com/${BuildConfig.GITHUB_REPO}/catalog"
     private val indexFile = File(context.filesDir, "catalog/index.json.gz")
     private val etagFile = File(context.filesDir, "catalog/index.etag")
     private val seriesDir = File(context.cacheDir, "series")
+    /** Letzter Abruf gescheitert? (Für den Hintergrund-Job: Wiederholung statt "Erfolg".) */
+    @Volatile var lastRefreshFailed = false; private set
 
     /** Zeitpunkt, zu dem der gespeicherte Katalog zuletzt geschrieben wurde (auch vom Hintergrund-Job). */
     fun storedAt(): Long = indexFile.lastModified()
@@ -45,6 +50,7 @@ class CatalogRepository(context: Context) {
 
     /** Neuen Katalog holen. null = unverändert oder nicht erreichbar. */
     suspend fun refresh(): CatalogIndex? = withContext(Dispatchers.IO) {
+        lastRefreshFailed = false
         runCatching {
             val request = Request.Builder().url("$base/index.json.gz").apply {
                 if (indexFile.exists() && etagFile.exists()) header("If-None-Match", etagFile.readText())
@@ -54,7 +60,7 @@ class CatalogRepository(context: Context) {
                 check(resp.isSuccessful) { "HTTP ${resp.code}" }
                 indexFile.parentFile?.mkdirs()
                 val tmp = File.createTempFile("index", ".tmp", indexFile.parentFile)
-                resp.body!!.byteStream().use { input -> tmp.outputStream().use { input.copyTo(it) } }
+                resp.body!!.byteStream().use { input -> tmp.outputStream().use { copyLimited(input, it, MAX_INDEX_BYTES) } }
                 val parsed = tmp.inputStream().use { CatalogParser.parseIndex(it) }   // erst prüfen, dann übernehmen
                 synchronized(CatalogRepository::class.java) {
                     if (!tmp.renameTo(indexFile)) { tmp.copyTo(indexFile, overwrite = true); tmp.delete() }
@@ -62,7 +68,7 @@ class CatalogRepository(context: Context) {
                 }
                 parsed
             }
-        }.getOrNull()
+        }.onFailure { lastRefreshFailed = true }.getOrNull()
     }
 
     /** Folgen einer Serie (aus dem Netz, sonst aus dem Zwischenspeicher). */
@@ -72,7 +78,7 @@ class CatalogRepository(context: Context) {
             Net.client.newCall(Request.Builder().url("$base/s/$id.json.gz").build()).execute().use { resp ->
                 check(resp.isSuccessful) { "HTTP ${resp.code}" }
                 seriesDir.mkdirs()
-                resp.body!!.byteStream().use { input -> file.outputStream().use { input.copyTo(it) } }
+                resp.body!!.byteStream().use { input -> file.outputStream().use { copyLimited(input, it, MAX_SERIES_BYTES) } }
             }
         }.isSuccess
         if (!fresh && !file.exists()) return@withContext emptyList()

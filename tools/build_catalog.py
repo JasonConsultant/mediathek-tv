@@ -51,13 +51,23 @@ def load(path):
             h, m, s = map(int, a[5].split(":")); secs = h * 3600 + m * 60 + s
         except ValueError:
             secs = 0
-        hd = expand(a[14], url)
+        url = secure(url)
+        hd = secure(expand(a[14], url))
         # Beste Qualität zuerst; die Normalfassung als Ersatz, falls der Sender die HD-Datei nicht mehr anbietet
         # (beim ZDF häufig: die Folge gibt es noch, nur die 1080p-Datei aus der Filmliste nicht mehr).
         out.append(dict(channel=ch, topic=th.strip(), raw=a[2].strip(), secs=secs, desc=a[7].strip(),
                         url=hd or url, url2=url if hd and hd != url else "",
-                        web=a[9], sub=a[10], ts=int(a[16] or 0), geo=a[18]))
+                        web=a[9], sub=secure(a[10]), ts=int(a[16] or 0), geo=a[18]))
     return out
+
+# Diese Server können kein HTTPS – alle anderen Adressen werden auf https umgestellt (die App lässt
+# Klartext nur für diese beiden zu).
+HTTP_ONLY = ("mediastorage01.sr-online.de", "nrodl.zdf.de")
+
+def secure(url):
+    if url.startswith("http://") and not any(url.startswith("http://" + h + "/") for h in HTTP_ONLY):
+        return "https://" + url[7:]
+    return url
 
 def expand(rel, base):
     """'Url HD' ist oft relativ zu 'Url' kodiert: '<präfixlänge>|<rest>'."""

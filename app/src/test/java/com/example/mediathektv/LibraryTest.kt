@@ -31,3 +31,14 @@ class LibraryTest {
         assertEquals(video.stableKey, reuploaded.stableKey)
     }
 }
+
+class CopyLimitedTest {
+    @org.junit.Test fun copiesWithinLimit() {
+        val out = java.io.ByteArrayOutputStream()
+        copyLimited(ByteArray(1000).inputStream(), out, 1000)
+        org.junit.Assert.assertEquals(1000, out.size())
+    }
+    @org.junit.Test(expected = IllegalStateException::class) fun rejectsOversize() {
+        copyLimited(ByteArray(1001).inputStream(), java.io.ByteArrayOutputStream(), 1000)
+    }
+}
