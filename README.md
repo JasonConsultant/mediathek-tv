@@ -107,9 +107,15 @@ APK aus dem neuesten Release auf einen USB-Stick kopieren und am Fernseher mit e
 | `Api.kt` | Live-Suche |
 | `MainActivity.kt` | Oberfläche |
 | `PlayerActivity.kt` | Player mit Untertiteln |
+| `CrashReport.kt` | Absturzbericht: wird beim nächsten Start angezeigt (abfotografieren und melden) |
 | `Library.kt` | Weiterschauen, Gesehen, Merkliste (auf dem Gerät) |
 | `LiveTv.kt` | SRF-Livestreams (Freigabe über die SRG-Schnittstelle) |
 | `CatalogRefreshWorker.kt` | Nachladen im Hintergrund |
 | `Updater.kt` | App-Updates |
 
 Katalog lokal bauen: `pip install scikit-learn && python3 tools/build_catalog.py --out catalog`
+
+## Tests
+`gradle :app:testDebugUnitTest` – neben den Parser-Tests drückt `NavigationSmokeTest` die Fernbedienungstasten
+auf der Hauptansicht durch (Robolectric, ohne Gerät): Links ins Menü, durch alle Rubriken, OK, Hoch/Runter in
+Reihen und Senderliste. Jeder Fokus-Fehler, der auf dem Fernseher abstürzen würde, fällt hier auf.

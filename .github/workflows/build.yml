@@ -40,7 +40,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           RELEASE_KEYSTORE: ${{ runner.temp }}/release.p12
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: gradle :app:assembleRelease :app:testReleaseUnitTest --no-daemon --stacktrace
+        run: gradle :app:assembleRelease :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Rename APK
         if: steps.key.outputs.ok == 'true'
         run: cp app/build/outputs/apk/release/app-release.apk MediathekTV.apk

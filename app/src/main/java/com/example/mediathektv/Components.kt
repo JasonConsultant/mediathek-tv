@@ -262,15 +262,40 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
  * sonst "zeigt" die Fernbedienung nach dem Zurückkehren ins Leere.
  */
 @Composable
-fun Modifier.restoreFocus(key: String, target: () -> String?, tick: Int = 0, onFocused: (String) -> Unit): Modifier {
+fun Modifier.restoreFocus(key: String, target: () -> String?, tick: Int = 0, allowed: () -> Boolean = { true },
+                          onFocused: (String) -> Unit): Modifier {
     val requester = remember { FocusRequester() }
-    // Beim Erscheinen und bei jeder Anforderung ([tick]) prüfen; der gemerkte Schlüssel wird bewusst nicht
+    // Beim Erscheinen und bei jeder Anforderung ([tick]) prüfen; Schlüssel und Erlaubnis werden bewusst nicht
     // in der Komposition gelesen – sonst baute jede Fokus-Bewegung alle sichtbaren Kacheln neu auf (träge).
     LaunchedEffect(tick) {
         withFrameNanos { }
-        if (key == target()) runCatching { requester.requestFocus() }
+        if (allowed() && key == target()) runCatching { requester.requestFocus() }
     }
     return this.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(key) }
+}
+
+/** Kachel-Fokus auf einer Hauptseite: merkt sich zusätzlich, dass die Seite (nicht das Menü) den Fokus hat. */
+@Composable
+fun Modifier.pageFocus(app: AppState, key: String, target: () -> String?, onFocused: (String) -> Unit): Modifier =
+    restoreFocus(key, target, app.restoreTick, { !app.menuFocused }) { app.menuFocused = false; app.pageFocused = true; onFocused(it) }
+
+@Composable
+fun CrashDialog(report: String, onDismiss: () -> Unit) {
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { focus.requestFocus() } }
+    Dialog(onDismissRequest = onDismiss) {
+        Column(Modifier.width(760.dp).clip(RoundedCornerShape(18.dp)).background(TvColors.Surface).padding(28.dp)) {
+            Text("Die App ist beim letzten Mal abgestürzt", color = TvColors.Text, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(6.dp))
+            Text("Bitte diesen Bildschirm abfotografieren und schicken – dann lässt sich der Fehler beheben.",
+                color = TvColors.TextMuted, fontSize = 13.sp)
+            Spacer(Modifier.height(12.dp))
+            Text(report, color = TvColors.Text, fontSize = 11.sp, lineHeight = 14.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = onDismiss, modifier = Modifier.focusRequester(focus)) { Text("Schließen") }
+        }
+    }
 }
 
 @Composable

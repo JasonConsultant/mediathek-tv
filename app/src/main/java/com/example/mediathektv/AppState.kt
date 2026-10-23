@@ -180,10 +180,15 @@ class AppState(context: Context) {
     // ---------- Navigation innerhalb der Hauptansicht ----------
     var tab by mutableStateOf(Tab.START)
     val pages = Tab.entries.associateWith { PageUi() }
-    /** Fokus nur dann zurückholen, wenn man von einer Unterseite zurückkommt (nicht beim Blättern durch die Rubriken). */
-    /** Zähler: jede Erhöhung holt den Fokus auf die gemerkte Kachel der aktuellen Seite zurück. */
+    /**
+     * Zähler: jede Erhöhung holt den Fokus auf die gemerkte Kachel der aktuellen Seite zurück
+     * (Rückkehr von einer Unterseite, OK im Seitenmenü). Solange das Seitenmenü den Fokus hat,
+     * holt keine Kachel den Fokus zu sich – sonst würde das Menü beim Durchblättern zuklappen.
+     */
     var restoreTick by mutableIntStateOf(0)
-    fun restoreFocus() { restoreTick++ }
+    var menuFocused by mutableStateOf(false)
+    var pageFocused = false      // irgendeine Kachel der Seite hat den Fokus (kein Compose-Zustand nötig)
+    fun restoreFocus() { menuFocused = false; restoreTick++ }
 
     // ---------- Laden & automatisches Nachladen ----------
     private val mutex = Mutex()

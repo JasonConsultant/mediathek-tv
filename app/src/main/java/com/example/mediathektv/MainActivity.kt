@@ -170,6 +170,10 @@ private fun App() {
         }
     }
     app.update?.let { UpdateDialog(it) { app.update = null } }
+
+    // Letzter Absturz (falls es einen gab): Fehlerstelle anzeigen, damit man sie melden kann
+    var crash by remember { mutableStateOf(CrashReport.take(context)) }
+    crash?.let { CrashDialog(it) { crash = null } }
 }
 
 /** Symbol je Rubrik. */
@@ -192,6 +196,7 @@ private val Tab.icon: ImageVector get() = when (this) {
 @Composable
 internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
     val focus = LocalFocusManager.current
+    val scope = rememberCoroutineScope()
     ModalNavigationDrawer(
         drawerContent = { open ->
             Column(
@@ -203,10 +208,20 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                 Tab.entries.forEach { t ->
                     NavigationDrawerItem(
                         selected = app.tab == t,
-                        // OK: Rubrik öffnen – der Fokus springt auf die gemerkte Kachel der Seite, das Menü schließt sich
-                        onClick = { app.tab = t; app.restoreFocus(); focus.moveFocus(FocusDirection.Right) },
+                        // OK: Rubrik öffnen – der Fokus springt auf die gemerkte Kachel der Seite, das Menü schließt sich.
+                        // Falls diese Kachel gerade nicht aufgebaut ist (weit gescrollt), einfach nach rechts auf die Seite.
+                        onClick = {
+                            app.tab = t
+                            app.restoreFocus()
+                            scope.launch {
+                                withFrameNanos { }; withFrameNanos { }
+                                if (!app.pageFocused) runCatching { focus.moveFocus(FocusDirection.Right) }
+                            }
+                        },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
-                        modifier = Modifier.onFocusChanged { if (it.isFocused) app.tab = t },
+                        modifier = Modifier.onFocusChanged {
+                            if (it.isFocused) { app.menuFocused = true; app.pageFocused = false; app.tab = t }
+                        },
                         colors = NavigationDrawerItemDefaults.colors(
                             contentColor = TvColors.TextMuted,
                             selectedContentColor = TvColors.Text,

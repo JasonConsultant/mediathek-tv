@@ -5,7 +5,6 @@ package com.example.mediathektv
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.BringIntoViewSpec
 import androidx.compose.foundation.gestures.LocalBringIntoViewSpec
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.platform.LocalDensity
 import kotlinx.coroutines.delay
 import androidx.compose.foundation.border
@@ -239,7 +238,6 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
         }
         LazyRow(
             state = ui.row(shelf.key),
-            modifier = Modifier.focusRestorer(),   // zurück in eine Reihe: dort weiter, wo man war
             contentPadding = PaddingValues(horizontal = PAGE_PADDING),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -247,7 +245,7 @@ private fun ShelfRow(app: AppState, ui: PageUi, shelf: Shelf, nav: Nav) {
                 val key = "${shelf.key}|${tile.key}"
                 TileView(
                     tile, app,
-                    Modifier.width(CARD_WIDTH).restoreFocus(key, { ui.focusKey }, app.restoreTick) {
+                    Modifier.width(CARD_WIDTH).pageFocus(app, key, { ui.focusKey }) {
                         ui.focusKey = key
                         ui.preview = tile.preview(app.country) ?: ui.preview
                     },
@@ -309,7 +307,7 @@ fun TvPage(app: AppState, nav: Nav) {
                             focusedContentColor = TvColors.Background,
                             selectedContentColor = TvColors.Text,
                         ),
-                        modifier = Modifier.restoreFocus(key, { ui.focusKey }, app.restoreTick) { ui.focusKey = it; ui.selectedChannel = ch },
+                        modifier = Modifier.pageFocus(app, key, { ui.focusKey }) { ui.focusKey = it; ui.selectedChannel = ch },
                     )
                 }
             }
