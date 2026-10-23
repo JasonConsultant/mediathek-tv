@@ -14,7 +14,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.Icons
@@ -187,15 +191,16 @@ private val Tab.icon: ImageVector get() = when (this) {
  */
 @Composable
 internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
+    val focus = LocalFocusManager.current
     ModalNavigationDrawer(
         drawerContent = { open ->
             Column(
                 Modifier.fillMaxHeight().background(
                     Brush.horizontalGradient(listOf(TvColors.Surface, TvColors.Surface.copy(alpha = if (open == DrawerValue.Open) 0.97f else 0.0f)))
-                ).padding(horizontal = 10.dp, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
+                ).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp),
             ) {
-                Row(Modifier.padding(start = 8.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.padding(start = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(30.dp).clip(RoundedCornerShape(8.dp)).background(TvColors.Accent), contentAlignment = Alignment.Center) {
                         Text("▶", color = Color.White, fontSize = 14.sp)
                     }
@@ -207,7 +212,8 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                 Tab.entries.forEach { t ->
                     NavigationDrawerItem(
                         selected = app.tab == t,
-                        onClick = { app.tab = t },
+                        // OK: Rubrik öffnen – Menü schließt sich, der Fokus springt auf die Seite
+                        onClick = { app.tab = t; focus.moveFocus(FocusDirection.Right) },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
                         modifier = Modifier.onFocusChanged { if (it.isFocused) app.tab = t },
                         colors = NavigationDrawerItemDefaults.colors(
