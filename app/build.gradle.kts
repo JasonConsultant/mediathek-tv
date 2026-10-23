@@ -17,17 +17,20 @@ android {
         minSdk = 24
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "1.$buildNumber"
+        versionName = "2.$buildNumber"
         buildConfigField("String", "GITHUB_REPO", "\"$repoSlug\"")
     }
 
-    // Fester Schlüssel, damit Updates über bestehende Installationen gehen
+    // Signierschlüssel kommt aus den GitHub-Secrets (nie ins Repo!). Lokal ohne Schlüssel: Debug-Signatur.
+    val keystorePath = System.getenv("RELEASE_KEYSTORE")
+    val keystorePassword = System.getenv("RELEASE_KEYSTORE_PASSWORD")
+    val hasReleaseKey = !keystorePath.isNullOrBlank() && !keystorePassword.isNullOrBlank()
     signingConfigs {
-        create("release") {
-            storeFile = file("release.keystore")
-            storePassword = "mediathek-tv"
+        if (hasReleaseKey) create("release") {
+            storeFile = file(keystorePath!!)
+            storePassword = keystorePassword
             keyAlias = "mediathek"
-            keyPassword = "mediathek-tv"
+            keyPassword = keystorePassword
         }
     }
 
@@ -36,10 +39,7 @@ android {
             isMinifyEnabled = true          // R8: verkleinern + verschleiern
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            signingConfig = signingConfigs.getByName("release")
-        }
-        debug {
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = if (hasReleaseKey) signingConfigs.getByName("release") else signingConfigs.getByName("debug")
         }
     }
 

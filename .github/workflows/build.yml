@@ -20,16 +20,34 @@ jobs:
       - name: Install SDK components
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true; "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0"
       - uses: gradle/actions/setup-gradle@v4
+      - name: Signierschlüssel aus den Secrets
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::warning::Secret KEYSTORE_BASE64 fehlt – es wird kein Release erstellt."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.p12"
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          fi
       - name: Build release APK
+        if: steps.key.outputs.ok == 'true'
         env:
           BUILD_NUMBER: ${{ github.run_number }}
-        run: gradle :app:assembleRelease --no-daemon --stacktrace
+          RELEASE_KEYSTORE: ${{ runner.temp }}/release.p12
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: gradle :app:assembleRelease :app:testReleaseUnitTest --no-daemon --stacktrace
       - name: Rename APK
+        if: steps.key.outputs.ok == 'true'
         run: cp app/build/outputs/apk/release/app-release.apk MediathekTV.apk
       - name: Create release
+        if: steps.key.outputs.ok == 'true'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v1.${{ github.run_number }}
-          name: Mediathek TV 1.${{ github.run_number }}
+          # Schema "v2-<n>": Versionen mit dem alten Schlüssel (v1.x) erkennen das bewusst nicht als Update
+          tag_name: v2-${{ github.run_number }}
+          name: Mediathek TV 2.${{ github.run_number }}
           body: "Automatischer Build von Commit ${{ github.sha }}"
           files: MediathekTV.apk

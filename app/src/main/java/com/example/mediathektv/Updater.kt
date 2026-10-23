@@ -13,7 +13,8 @@ data class Update(val versionName: String, val versionCode: Int, val apkUrl: Str
 
 /**
  * Prüft beim Start die GitHub-Releases des Repos (öffentlich, ohne Zugangsdaten).
- * Release-Tags haben die Form "v1.<Build-Nummer>"; die Build-Nummer ist der versionCode.
+ * Release-Tags haben die Form "v2-<Build-Nummer>"; die Build-Nummer ist der versionCode.
+ * (Ältere Releases "v1.<n>" waren mit einem anderen Schlüssel signiert und werden ignoriert.)
  */
 object Updater {
     suspend fun check(): Update? = withContext(Dispatchers.IO) {
@@ -26,12 +27,12 @@ object Updater {
                 if (!resp.isSuccessful) return@runCatching null
                 val json = JSONObject(resp.body!!.string())
                 val tag = json.getString("tag_name")
-                val code = tag.substringAfterLast('.').toIntOrNull() ?: return@runCatching null
+                val code = Regex("^v2-(\\d+)$").find(tag)?.groupValues?.get(1)?.toIntOrNull() ?: return@runCatching null
                 if (code <= BuildConfig.VERSION_CODE) return@runCatching null
                 val assets = json.getJSONArray("assets")
                 val apk = (0 until assets.length()).map { assets.getJSONObject(it) }
                     .firstOrNull { it.getString("name").endsWith(".apk") } ?: return@runCatching null
-                Update(tag.removePrefix("v"), code, apk.getString("browser_download_url"))
+                Update("2.$code", code, apk.getString("browser_download_url"))
             }
         }.getOrNull()
     }
