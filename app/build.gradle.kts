@@ -37,12 +37,6 @@ android {
     }
 
     buildTypes {
-        debug {
-            applicationIdSuffix = ".preview"
-            versionNameSuffix = "-preview"
-            buildConfigField("String", "DEEP_LINK_SCHEME", "\"mediathektv-preview\"")
-            manifestPlaceholders["playbackScheme"] = "mediathektv-preview"
-        }
         release {
             isMinifyEnabled = true          // R8: verkleinern + verschleiern
             isShrinkResources = true

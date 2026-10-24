@@ -1,6 +1,6 @@
 # TV- und Fernbedienungsoptimierung
 
-Stand: 24.10.2026. Grundlage ist das hochgeladene Quellcode-ZIP, nicht ein nachgebautes Projekt aus der APK.
+Stand: 24.10.2026 (Version 2.27).
 
 ## Umgesetzt
 
@@ -17,8 +17,7 @@ Stand: 24.10.2026. Grundlage ist das hochgeladene Quellcode-ZIP, nicht ein nachg
 | Senderwechsel | Alte SRG-Aufträge werden abgebrochen; eine Generationsnummer verhindert, dass verspätete Antworten den aktuellen Sender überschreiben. |
 | Home / Standby | Wiedergabe und Timer pausieren im Hintergrund. Bei Rückkehr bleibt die Wiedergabe pausiert; Live-Adressen werden erneut aufgelöst. Ein unterbrochener Folgen-Countdown wartet auf Bestätigung mit OK. |
 | Hintergrundkatalog | Nach ausgeschöpften Wiederholungen wird ein Abruffehler als Fehler gemeldet, nicht als Erfolg. |
-| Vorschau | Eigenes Paket `com.example.mediathektv.preview`, eigener Name und eigenes Deep-Link-Schema. Kein Release-Updateangebot für das Originalpaket. Verlauf und Einstellungen sind getrennt. |
-| Build-Workflow | Gradle 8.7 explizit festgelegt. Vorschau und Tests laufen unabhängig vom Vorhandensein eines Release-Schlüssels; APK wird als Workflow-Artefakt bereitgestellt. Release-Veröffentlichung weiterhin nur mit vorhandenen Secrets. |
+| Build-Workflow | Gradle-Wrapper 8.7 (mit Prüfsumme). Tests laufen vor jedem Release; veröffentlicht wird nur mit vorhandenen Secrets. |
 
 Der Quellcode enthielt bereits HTTPS-Regeln, Backup-Ausschlüsse, Update-Prüfungen und einen anfänglichen Player-Fokus. Diese sind nicht als neue Leistungen dieser Überarbeitung zu verstehen.
 
@@ -31,31 +30,24 @@ Der Quellcode enthielt bereits HTTPS-Regeln, Backup-Ausschlüsse, Update-Prüfun
 - Lautstärke, Home und Systemtasten werden nicht pauschal abgefangen.
 - Zurück schließt zuerst eine sichtbare Player-/Infoleiste und verlässt dann den Player. Der Folgen-Countdown wird mit Zurück beendet.
 
-## Installation und Build
+## Build
 
-Die Vorschau ist eine Testversion mit Debug-Signatur. Sie lässt sich neben der bisherigen App installieren; sie ist kein signiertes Update der Original-App und übernimmt deren Verlauf nicht automatisch.
-
-Mit JDK 17, Android SDK 35 und Gradle 8.7 im Projektordner:
+Mit JDK 17, Android SDK 35 und dem beiliegenden Gradle-Wrapper:
 
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest :app:assembleRelease
 ```
 
-Ergebnis: `app/build/outputs/apk/debug/app-debug.apk`.
-
-Unter Windows lautet der Aufruf `gradlew.bat :app:assembleDebug :app:testDebugUnitTest`.
-Der beiliegende Gradle-Wrapper lädt die festgelegte Version 8.7 und prüft deren SHA-256-Prüfsumme.
-
-Für ein Release muss `BUILD_NUMBER` größer als der bereits verteilte versionCode sein. Der ursprüngliche Signierschlüssel bleibt erforderlich, wenn vorhandene Installationen aktualisiert werden sollen. Schlüssel und Passwörter gehören nicht in das ZIP.
+Unter Windows: `gradlew.bat …`. Der Wrapper lädt Gradle 8.7 und prüft dessen SHA-256-Prüfsumme.
+Ein Release, das sich über die installierte App legen lässt, braucht den ursprünglichen Signierschlüssel
+(nur in den GitHub-Secrets) und einen höheren `BUILD_NUMBER`.
 
 ## Prüfung
 
 - Neun gezielte `RemoteInputTest`-Regressionstests wurden separat gegen das Android-SDK kompiliert und auf der JVM erfolgreich ausgeführt.
 - Vollständiger Gradle-Build `:app:assembleDebug :app:testDebugUnitTest`: erfolgreich mit JDK 17.0.21 und Gradle 8.7.
 - Alle 23 Tests bestanden, keine Fehler und keine übersprungenen Tests. Darin enthalten: neun Fernbedienungs-Regressionstests und der vorhandene Robolectric-Oberflächentest mit D-Pad-Navigation. Die separate Ausführung der neun Tests wird nicht zusätzlich zur Gesamtzahl gezählt.
-- APK-Signatur mit `apksigner verify` erfolgreich geprüft (APK v2, Debug-Signierer).
 - ZIP-Integrität der APK und `zipalign -c -P 16 4` erfolgreich geprüft. Diese Prüfungen ersetzen keinen Laufzeittest auf einem 16-KB-Gerät.
-- Maschinenlesbare Ergebnisse: `pruefung/Build-und-Tests.json`; punktuelle Erreichbarkeit: `pruefung/Erreichbarkeit.json`.
 - Keine Prüfung auf einem echten Fernseher und keine Garantie für alle Hersteller, Fernbedienungen oder Medienformate.
 
 Die feste Katalogindex-, EPG- und GitHub-Release-Adresse lieferte bei der Prüfung am 24.10.2026 HTTP 200. Bei den beiden gzip-Dateien wurde zusätzlich der gzip-Header der Antwort geprüft. Das ist eine punktuelle Erreichbarkeitsprüfung, keine vollständige Validierung sämtlicher Sendungs-, Untertitel-, Bild- oder Streamadressen. Medien können ablaufen oder geografisch gesperrt sein. Die Original-Serveradressen wurden nicht auf eigene Dienste umgestellt.

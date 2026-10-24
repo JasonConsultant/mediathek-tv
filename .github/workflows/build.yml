@@ -24,13 +24,8 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.7'
-      - name: Build preview and run tests
-        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
-      - name: Downloadable preview APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: MediathekTV-Vorschau
-          path: app/build/outputs/apk/debug/app-debug.apk
+      - name: Tests
+        run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Signierschlüssel aus den Secrets
         id: key
         env:

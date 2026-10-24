@@ -154,20 +154,12 @@ Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entf
   bis zu dreimal wiederholt, Deep-Links (`mediathektv://play?key=…`) werden auf Host und Schlüsselform geprüft.
 
 
-## Überarbeitung für TV-Fernbedienungen (24.10.2026)
+## Fernbedienung im Player
+Tastenrouting, Spulen, Live-TV-Belegung, Zurück-Verhalten und Home/Standby sind in `TV-OPTIMIERUNG.md` beschrieben
+(`RemoteInput.kt`, getestet in `RemoteInputTest`).
 
-Die Änderungen und der Prüfstatus stehen in `TV-OPTIMIERUNG.md`.
-Debug-Builds heißen **Mediathek TV Vorschau** und verwenden das getrennte Paket
-`com.example.mediathektv.preview`. Sie können parallel zur bisherigen App installiert werden.
-Die Vorschau hat eigene App-Links und bietet keine Release-Updates für das Originalpaket an.
-Sie übernimmt den Verlauf der Original-App nicht automatisch.
-
-Build mit JDK 17, Android SDK 35 und Gradle 8.7:
+Bauen mit JDK 17, Android SDK 35 und dem beiliegenden Gradle-Wrapper (8.7):
 
 ```sh
-./gradlew :app:assembleDebug :app:testDebugUnitTest
+./gradlew :app:testDebugUnitTest :app:assembleRelease
 ```
-
-Die APK liegt anschließend unter `app/build/outputs/apk/debug/app-debug.apk`.
-Für Release-Builds gelten weiterhin die ursprünglichen Signier- und Versionsvorgaben.
-Die Änderungen werden durch dieses ZIP nicht automatisch auf GitHub veröffentlicht.
