@@ -10,12 +10,15 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.addCallback
 import androidx.lifecycle.lifecycleScope
+import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -28,7 +31,11 @@ import androidx.media3.common.Tracks
 import android.app.AlertDialog
 import java.util.Locale
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.session.MediaSession
 import androidx.media3.ui.PlayerView
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** Was abgespielt werden soll – im Speicher, weil Folgen-Listen für Intents zu groß werden können. */
@@ -49,7 +56,8 @@ object Playback {
  * Vollbild-Player für Sendungen und Live-TV.
  * Fernbedienung (Bedienleiste ausgeblendet): OK = Pause/Weiter, Links/Rechts = 10 s,
  * Hoch / Menü- / Untertitel-Taste = Untertitel wählen oder ausschalten.
- * Live-TV: Hoch/Runter oder Programm +/− = Sender wechseln, OK = Infoleiste mit Jetzt/Danach.
+ * Live-TV: Hoch/Runter oder Programm +/− = Sender wechseln; Links/Rechts öffnet die Bedienleiste.
+ * OK und Medientasten = Pause/Weiter; Info = Jetzt/Danach. Alle Funktionen auch ohne Sondertasten.
  * Sendungen: setzt an der gespeicherten Stelle fort, speichert den Fortschritt und startet am Ende
  * nach 10 Sekunden die nächste Folge (OK = sofort, Zurück = beenden).
  */
@@ -59,6 +67,14 @@ class PlayerActivity : ComponentActivity() {
     private lateinit var overlay: TextView
     private lateinit var banner: TextView
     private val handler = Handler(Looper.getMainLooper())
+    private val remote = RemoteInput()
+    private var mediaSession: MediaSession? = null
+    private var streamJob: Job? = null
+    private var streamGeneration = 0
+    private var subtitleDialog: AlertDialog? = null
+    private var backgrounded = false
+    private var needsLiveRefresh = false
+    private var playbackRequested = true
 
     private var video: Video? = null
     private var live: LiveChannel? = null
@@ -66,6 +82,7 @@ class PlayerActivity : ComponentActivity() {
     private var hasSubtitles = false
     private var subtitlesOn = false
     private var countdown = 0
+    private var countdownPaused = false
     private val hideBanner = Runnable { banner.visibility = TextView.GONE }
 
     private val saveTicker = object : Runnable {
@@ -82,7 +99,15 @@ class PlayerActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         Library.init(applicationContext)
 
-        player = ExoPlayer.Builder(this).build()
+        player = ExoPlayer.Builder(this, DefaultRenderersFactory(this).setEnableDecoderFallback(true))
+            .setSeekBackIncrementMs(10_000)
+            .setSeekForwardIncrementMs(10_000)
+            .setAudioAttributes(AudioAttributes.DEFAULT, true)
+            .setHandleAudioBecomingNoisy(true)
+            .build()
+        // Eigene Kennung je Player: Startet ein neuer Player, bevor der alte zerstört ist (z.B. "Weiterschauen"
+        // vom Startbildschirm, während der Player im Hintergrund liegt), würde die gleiche Kennung abstürzen.
+        mediaSession = MediaSession.Builder(this, player).setId("player-${java.util.UUID.randomUUID()}").build()
         view = PlayerView(this).apply {
             player = this@PlayerActivity.player
             keepScreenOn = true
@@ -116,8 +141,25 @@ class PlayerActivity : ComponentActivity() {
         setContentView(root)
         view.isFocusable = true
         view.requestFocus()
+        view.setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { visibility ->
+            if (visibility == View.VISIBLE) {
+                handler.removeCallbacks(hideBanner)
+                banner.visibility = View.GONE
+            }
+        })
+        onBackPressedDispatcher.addCallback(this) {
+            when {
+                overlay.visibility == View.VISIBLE -> cancelCountdown()
+                view.isControllerFullyVisible -> { view.hideController(); view.requestFocus() }
+                banner.visibility == View.VISIBLE -> { handler.removeCallbacks(hideBanner); hideBanner.run() }
+                else -> finish()
+            }
+        }
 
         player.addListener(object : Player.Listener {
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                playbackRequested = playWhenReady
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()
             }
@@ -136,8 +178,12 @@ class PlayerActivity : ComponentActivity() {
     // ---------------------------------------------------------------- Sendungen
 
     private fun startVideo(v: Video, fromStart: Boolean) {
+        streamGeneration++
+        streamJob?.cancel()
         video = v
         live = null
+        handler.removeCallbacks(countdownTicker)
+        needsLiveRefresh = false
         hasSubtitles = v.hasSubtitles
         subtitlesOn = Playback.subtitles
         view.setShowSubtitleButton(true)      // auch für Untertitel, die im Stream selbst stecken
@@ -161,9 +207,9 @@ class PlayerActivity : ComponentActivity() {
             toast("Fortsetzen bei ${clock(saved.position)}")
         }
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = !backgrounded
         handler.removeCallbacks(saveTicker)
-        handler.postDelayed(saveTicker, 10_000)
+        if (!backgrounded) handler.postDelayed(saveTicker, 10_000)
     }
 
     private fun saveProgress() {
@@ -177,18 +223,21 @@ class PlayerActivity : ComponentActivity() {
         val next = Playback.queue.firstOrNull() ?: return finish()
         Library.queueNext(next, Playback.seriesId, Playback.seriesName)
         countdown = 10
+        countdownPaused = false
         showNextOverlay()
-        handler.postDelayed(countdownTicker, 1000)
+        if (!backgrounded) handler.postDelayed(countdownTicker, 1000)
     }
 
     private fun showNextOverlay() {
         val next = Playback.queue.firstOrNull() ?: return
         val label = next.episode?.label?.let { "$it · " }.orEmpty()
-        overlay.text = "Nächste Folge in $countdown s\n$label${next.title}\nOK = jetzt abspielen · Zurück = beenden"
+        val heading = if (countdownPaused) "Nächste Folge bereit" else "Nächste Folge in $countdown s"
+        overlay.text = "$heading\n$label${next.title}\nOK = jetzt abspielen · Zurück = beenden"
         overlay.visibility = TextView.VISIBLE
     }
 
     private fun playNext() {
+        countdownPaused = false
         handler.removeCallbacks(countdownTicker)
         val next = Playback.queue.firstOrNull() ?: return finish()
         Playback.queue = Playback.queue.drop(1)
@@ -205,7 +254,13 @@ class PlayerActivity : ComponentActivity() {
 
     // ---------------------------------------------------------------- Live-TV
 
-    private fun startLive(ch: LiveChannel) {
+    private fun startLive(ch: LiveChannel, autoPlay: Boolean = true) {
+        streamGeneration++
+        val generation = streamGeneration
+        streamJob?.cancel()
+        needsLiveRefresh = false
+        playbackRequested = autoPlay
+        player.playWhenReady = autoPlay && !backgrounded
         live = ch
         Playback.live = ch
         video = null
@@ -223,10 +278,15 @@ class PlayerActivity : ComponentActivity() {
         showBanner()
         if (ch.srgUrn.isNotBlank()) {
             player.stop()
-            lifecycleScope.launch {
-                runCatching { SrgResolver.resolve(ch.srgUrn) }
-                    .onSuccess { if (live == ch) playStream(it, ch.name) }
-                    .onFailure { if (live == ch) liveFailed(ch) }
+            streamJob = lifecycleScope.launch {
+                try {
+                    val stream = SrgResolver.resolve(ch.srgUrn)
+                    if (generation == streamGeneration && !backgrounded) playStream(stream, ch.name)
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    if (generation == streamGeneration && !backgrounded) liveFailed(ch)
+                }
             }
         } else playStream(Stream(ch.url), ch.name)
     }
@@ -260,7 +320,8 @@ class PlayerActivity : ComponentActivity() {
             }
             if (next != null) append("\nDanach  ").append(next.times).append("  ").append(next.title)
             if (note != null) append("\n").append(note)
-            if (Playback.channels.size > 1) append("\n▲▼ Sender wechseln  ·  Menü-Taste: Untertitel")
+            if (Playback.channels.size > 1) append("\n▲▼ Sender wechseln")
+            append("  ·  ◀▶ Bedienleiste / Untertitel  ·  OK Pause / Weiter")
         }
         banner.visibility = TextView.VISIBLE
         handler.removeCallbacks(hideBanner)
@@ -271,9 +332,11 @@ class PlayerActivity : ComponentActivity() {
     private fun liveFailed(ch: LiveChannel) {
         if (Playback.channels.size > 1) {
             player.stop()
-            showBanner("⚠ ${ch.name} ist in deinem Land gerade nicht verfügbar – anderen Sender wählen.")
+            view.hideController()
+            view.requestFocus()
+            showBanner("⚠ ${ch.name} kann gerade nicht geladen werden – Verbindung prüfen oder anderen Sender wählen.")
         } else {
-            toast("${ch.name} ist in deinem Land gerade nicht verfügbar.")
+            toast("${ch.name} kann gerade nicht geladen werden. Verbindung und regionale Verfügbarkeit prüfen.")
             finish()
         }
     }
@@ -284,22 +347,28 @@ class PlayerActivity : ComponentActivity() {
         stream.licenseUrl?.let { item.setDrmConfiguration(MediaItem.DrmConfiguration.Builder(C.WIDEVINE_UUID).setLicenseUri(it).build()) }
         player.setMediaItem(item.build())
         player.prepare()
-        player.playWhenReady = true
+        player.playWhenReady = playbackRequested && !backgrounded
     }
 
     // ---------------------------------------------------------------- Fehler, Untertitel, Tasten
 
     private fun onError(error: PlaybackException? = null) {
+        if (backgrounded || isFinishing) return
         val v = video
         val http = generateSequence(error as Throwable?) { it.cause }
             .filterIsInstance<HttpDataSource.InvalidResponseCodeException>().firstOrNull()?.responseCode
+        val decoderFailure = error?.errorCode in setOf(
+            PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FAILED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
+            PlaybackException.ERROR_CODE_DECODING_FORMAT_EXCEEDS_CAPABILITIES,
+        )
+        if (v != null && decoderFailure && tryVideoFallback(v)) {
+            toast("Diese Qualität wird vom Fernseher nicht unterstützt. Ersatzqualität wird versucht.")
+            return
+        }
         if (v != null && http in listOf(403, 404, 410)) {
-            if (v.fallbackUrl.isNotBlank() && v.fallbackUrl != v.url) {    // HD-Datei weg → Normalqualität
-                val alt = v.copy(source = v.source.copy(url = v.fallbackUrl, fallbackUrl = ""))
-                Playback.video = alt
-                startVideo(alt, fromStart = false)
-                return
-            }
+            if (tryVideoFallback(v)) return    // HD-Datei weg → Normalqualität
             Library.markBroken(v)
             toast("${v.title}: beim Sender nicht mehr verfügbar.")
             finish(); return
@@ -313,6 +382,19 @@ class PlayerActivity : ComponentActivity() {
         if (ch != null) return liveFailed(ch)
         toast("Video kann nicht abgespielt werden (evtl. nicht mehr verfügbar oder nur im Inland abrufbar).")
         finish()
+    }
+
+    private fun tryVideoFallback(v: Video): Boolean {
+        if (v.fallbackUrl.isBlank() || v.fallbackUrl == v.url) return false
+        val position = player.currentPosition.coerceAtLeast(0)
+        val shouldPlay = player.playWhenReady
+        saveProgress()
+        val alt = v.copy(source = v.source.copy(url = v.fallbackUrl, fallbackUrl = ""))
+        Playback.video = alt
+        startVideo(alt, fromStart = true)
+        player.seekTo(position)
+        player.playWhenReady = shouldPlay && !backgrounded
+        return true
     }
 
     private fun applySubtitles() {
@@ -340,13 +422,14 @@ class PlayerActivity : ComponentActivity() {
 
     /** Auswahl: Aus oder eine der vorhandenen Untertitel-Spuren. */
     private fun chooseSubtitles() {
+        if (subtitleDialog?.isShowing == true) return
         val tracks = textTracks()
         if (tracks.isEmpty()) { toast("Für diese Sendung gibt es keine Untertitel."); return }
         val disabled = C.TRACK_TYPE_TEXT in player.trackSelectionParameters.disabledTrackTypes
         val current = if (disabled) 0 else tracks.indexOfFirst { it.group.isTrackSelected(it.index) } + 1
         val labels = (listOf("Aus") + tracks.map { it.label }).toTypedArray()
         view.hideController()
-        AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        subtitleDialog = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
             .setTitle("Untertitel")
             .setSingleChoiceItems(labels, current.coerceAtLeast(0)) { dialog, which ->
                 val params = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -362,60 +445,81 @@ class PlayerActivity : ComponentActivity() {
                 else Playback.subtitles = subtitlesOn                   // gilt auch für die nächste Folge
                 dialog.dismiss()
             }
-            .show()
+            .create().also { dialog ->
+                dialog.setOnDismissListener {
+                    subtitleDialog = null
+                    remote.reset()
+                    if (!backgrounded && !isFinishing) showControls()
+                }
+                dialog.show()
+            }
+    }
+
+    private fun showControls() {
+        handler.removeCallbacks(hideBanner)
+        banner.visibility = View.GONE
+        view.showController()
+        // A concrete child gives D-pad navigation a predictable entry point.
+        val playPause = view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)
+        if (playPause?.isShown == true && playPause.isEnabled) playPause.requestFocus()
+        else view.requestFocus()
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        // Gedrückt halten: nur Spulen (Links/Rechts) darf sich wiederholen – OK, Senderwechsel, Untertitel nicht.
-        val repeating = event.action == KeyEvent.ACTION_DOWN && event.repeatCount > 0
-        if (repeating && event.keyCode != KeyEvent.KEYCODE_DPAD_LEFT && event.keyCode != KeyEvent.KEYCODE_DPAD_RIGHT) return true
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            if (overlay.visibility == TextView.VISIBLE) {
-                when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MEDIA_PLAY -> { playNext(); return true }
-                    KeyEvent.KEYCODE_BACK -> return cancelCountdown()
-                }
-            }
-            if (event.keyCode == KeyEvent.KEYCODE_CAPTIONS || event.keyCode == KeyEvent.KEYCODE_MENU) {
-                chooseSubtitles(); return true
-            }
-            if (live == null && !view.isControllerFullyVisible && event.keyCode == KeyEvent.KEYCODE_DPAD_UP) {
-                chooseSubtitles(); return true
-            }
-            if (live != null) when (event.keyCode) {
-                KeyEvent.KEYCODE_CHANNEL_UP -> { zap(-1); return true }
-                KeyEvent.KEYCODE_CHANNEL_DOWN -> { zap(1); return true }
-                KeyEvent.KEYCODE_INFO, KeyEvent.KEYCODE_GUIDE -> { showBanner(); return true }
-            }
-            if (live != null && !view.isControllerFullyVisible) {
-                when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_UP -> { zap(-1); return true }
-                    KeyEvent.KEYCODE_DPAD_DOWN -> { zap(1); return true }
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (banner.visibility == TextView.VISIBLE) { hideBanner.run(); view.showController() } else showBanner()
-                        return true
-                    }
-                    KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> { showBanner(); return true }
-                }
-            }
-            if (!view.isControllerFullyVisible) {
-                when (event.keyCode) {
-                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (player.isPlaying) player.pause() else player.play()
-                        view.showController(); return true
-                    }
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> { seekBy(10_000); return true }
-                    KeyEvent.KEYCODE_DPAD_LEFT -> { seekBy(-10_000); return true }
-                }
-            }
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) return super.dispatchKeyEvent(event)
+        if (event.isCanceled) {
+            remote.reset()
+            return super.dispatchKeyEvent(event)
         }
-        return view.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
+        val decision = remote.handle(event.keyCode, event.action, event.repeatCount, event.eventTime,
+            live != null, view.isControllerFullyVisible, overlay.visibility == View.VISIBLE)
+        when (decision.command) {
+            RemoteCommand.DELEGATE -> return view.dispatchKeyEvent(event) || super.dispatchKeyEvent(event)
+            RemoteCommand.CONSUME -> Unit
+            RemoteCommand.TOGGLE_PLAY -> {
+                if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) player.pause() else player.play()
+                showControls()
+            }
+            RemoteCommand.PLAY -> { player.play(); showControls() }
+            RemoteCommand.PAUSE -> { player.pause(); showControls() }
+            RemoteCommand.STOP -> { player.pause(); finish() }
+            RemoteCommand.SEEK -> seekBy(decision.seekMs)
+            RemoteCommand.PREVIOUS_CHANNEL -> zap(-1)
+            RemoteCommand.NEXT_CHANNEL -> zap(1)
+            RemoteCommand.INFO -> showBanner()
+            RemoteCommand.CONTROLS -> showControls()
+            RemoteCommand.SUBTITLES -> chooseSubtitles()
+            RemoteCommand.NEXT_EPISODE -> playNext()
+        }
+        return true
     }
 
     private fun seekBy(ms: Long) {
-        val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-        player.seekTo((player.currentPosition + ms).coerceIn(0, end))
-        view.showController()
+        if (player.isCurrentMediaItemSeekable) {
+            val end = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
+            player.seekTo((player.currentPosition + ms).coerceIn(0, end))
+        }
+        showControls()
+    }
+
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        remote.reset()
+        if (hasFocus && ::view.isInitialized && subtitleDialog == null && !backgrounded && !view.hasFocus()) view.requestFocus()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        if (!backgrounded) return
+        backgrounded = false
+        // Returning from Home/standby stays paused until the user explicitly resumes.
+        if (needsLiveRefresh) live?.let { ch ->
+            startLive(ch, autoPlay = false)
+        }
+        showControls()
+        handler.removeCallbacks(saveTicker)
+        handler.postDelayed(saveTicker, 10_000)
+        if (overlay.visibility == View.VISIBLE) showNextOverlay()
     }
 
     private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
@@ -425,17 +529,32 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onStop() {
-        super.onStop()
+        backgrounded = true
+        if (overlay.visibility == View.VISIBLE) countdownPaused = true
+        needsLiveRefresh = live != null
+        streamGeneration++
+        streamJob?.cancel()
+        remote.reset()
+        handler.removeCallbacks(saveTicker)
+        handler.removeCallbacks(countdownTicker)
+        handler.removeCallbacks(hideBanner)
         saveProgress()
         player.pause()
+        super.onStop()
         val ctx = applicationContext
         Thread { WatchNext.sync(ctx) }.start()
     }
 
     override fun onDestroy() {
-        super.onDestroy()
+        streamJob?.cancel()
+        subtitleDialog?.setOnDismissListener(null)
+        subtitleDialog?.dismiss()
         handler.removeCallbacksAndMessages(null)
+        mediaSession?.release()
+        mediaSession = null
+        if (::view.isInitialized) view.player = null
         if (::player.isInitialized) player.release()
+        super.onDestroy()
         if (isFinishing) { Playback.live = null; Playback.channels = emptyList() }
     }
 

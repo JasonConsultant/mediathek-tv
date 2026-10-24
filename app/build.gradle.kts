@@ -19,6 +19,8 @@ android {
         versionCode = buildNumber
         versionName = "2.$buildNumber"
         buildConfigField("String", "GITHUB_REPO", "\"$repoSlug\"")
+        buildConfigField("String", "DEEP_LINK_SCHEME", "\"mediathektv\"")
+        manifestPlaceholders["playbackScheme"] = "mediathektv"
     }
 
     // Signierschlüssel kommt aus den GitHub-Secrets (nie ins Repo!). Lokal ohne Schlüssel: Debug-Signatur.
@@ -35,6 +37,12 @@ android {
     }
 
     buildTypes {
+        debug {
+            applicationIdSuffix = ".preview"
+            versionNameSuffix = "-preview"
+            buildConfigField("String", "DEEP_LINK_SCHEME", "\"mediathektv-preview\"")
+            manifestPlaceholders["playbackScheme"] = "mediathektv-preview"
+        }
         release {
             isMinifyEnabled = true          // R8: verkleinern + verschleiern
             isShrinkResources = true
@@ -76,6 +84,7 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer-hls:1.4.1")
     implementation("androidx.media3:media3-exoplayer-dash:1.4.1")
     implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-session:1.4.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")   // echtes org.json für JVM-Tests

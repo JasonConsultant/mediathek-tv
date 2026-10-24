@@ -200,8 +200,6 @@ fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: Str
         val v = playUrl?.takeIf { it != version.url }?.let { version.copy(source = version.source.copy(url = it)) } ?: version
         PlayerActivity.play(context, v, subtitles && version.hasSubtitles, queue.orEmpty(), seriesId, seriesName, fromStart)
     }
-    val playFocus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { withFrameNanos { }; runCatching { playFocus.requestFocus() } }
 
     Box(Modifier.fillMaxSize().background(
         Brush.horizontalGradient(listOf(TvColors.channel(video.channel).copy(alpha = 0.3f), TvColors.Background)))) {
@@ -225,7 +223,7 @@ fun DetailScreen(app: AppState, video: Video, seriesName: String?, seriesId: Str
                 maxLines = 6, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.6f))
             Spacer(Modifier.height(24.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { play(fromStart = false) }, modifier = Modifier.focusRequester(playFocus),
+                Button(onClick = { play(fromStart = false) }, modifier = Modifier.restoreFocus("play", { "play" }) {},
                     colors = ButtonDefaults.colors(focusedContainerColor = Color.White, focusedContentColor = TvColors.Background)) {
                     Text(when {
                         available == false -> "Trotzdem versuchen"

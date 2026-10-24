@@ -20,6 +20,8 @@ data class Update(val versionName: String, val versionCode: Int, val apkUrl: Str
  */
 object Updater {
     suspend fun check(): Update? = withContext(Dispatchers.IO) {
+        // Release APKs use a different package/signing key than the parallel preview installation.
+        if (BuildConfig.DEBUG) return@withContext null
         runCatching {
             val request = Request.Builder()
                 .url("https://api.github.com/repos/${BuildConfig.GITHUB_REPO}/releases/latest")

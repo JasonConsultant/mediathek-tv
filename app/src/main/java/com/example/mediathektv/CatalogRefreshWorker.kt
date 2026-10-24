@@ -19,7 +19,11 @@ class CatalogRefreshWorker(context: Context, params: WorkerParameters) : Corouti
     override suspend fun doWork(): Result {
         val repo = CatalogRepository(applicationContext)
         repo.refresh()                                     // null = unverändert (304) oder Fehler
-        return if (repo.lastRefreshFailed && runAttemptCount < 3) Result.retry() else Result.success()
+        return when {
+            !repo.lastRefreshFailed -> Result.success()
+            runAttemptCount < 3 -> Result.retry()
+            else -> Result.failure()
+        }
     }
 
     companion object {

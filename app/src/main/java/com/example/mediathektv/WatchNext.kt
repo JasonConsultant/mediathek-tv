@@ -16,7 +16,8 @@ object WatchNext {
     private const val MAX = 10
     private const val PREFS = "watchnext"
 
-    fun deepLink(key: String): Uri = Uri.parse("mediathektv://play").buildUpon().appendQueryParameter("key", key).build()
+    fun deepLink(key: String): Uri = Uri.Builder().scheme(BuildConfig.DEEP_LINK_SCHEME).authority("play")
+        .appendQueryParameter("key", key).build()
 
     /** Startbildschirm an "Weiterschauen" der App angleichen. Im Hintergrund aufrufen. */
     @SuppressLint("RestrictedApi")

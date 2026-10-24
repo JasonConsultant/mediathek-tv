@@ -23,6 +23,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.awaitCancellation
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -265,11 +269,17 @@ fun ErrorBox(message: String, onRetry: () -> Unit) {
 fun Modifier.restoreFocus(key: String, target: () -> String?, tick: Int = 0, allowed: () -> Boolean = { true },
                           onFocused: (String) -> Unit): Modifier {
     val requester = remember { FocusRequester() }
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    val currentTarget by rememberUpdatedState(target)
+    val currentAllowed by rememberUpdatedState(allowed)
     // Beim Erscheinen und bei jeder Anforderung ([tick]) prüfen; Schlüssel und Erlaubnis werden bewusst nicht
     // in der Komposition gelesen – sonst baute jede Fokus-Bewegung alle sichtbaren Kacheln neu auf (träge).
-    LaunchedEffect(tick) {
-        withFrameNanos { }
-        if (allowed() && key == target()) runCatching { requester.requestFocus() }
+    LaunchedEffect(tick, key, lifecycle) {
+        lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            withFrameNanos { }
+            if (currentAllowed() && key == currentTarget()) runCatching { requester.requestFocus() }
+            awaitCancellation()
+        }
     }
     return this.focusRequester(requester).onFocusChanged { if (it.isFocused) onFocused(key) }
 }

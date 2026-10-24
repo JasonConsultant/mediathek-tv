@@ -76,11 +76,13 @@ Neuzugänge, höchstens 7.000 pro Lauf.
 | Überall | Steuerkreuz / OK | navigieren / öffnen |
 | Überall | Zurück | eine Ebene zurück |
 | Player | OK | Pause / weiter |
-| Player | Links / Rechts | 10 Sekunden zurück / vor |
+| Player, Bedienleiste ausgeblendet | Links / Rechts | 10 Sekunden zurück / vor; gehalten ab 2 Sekunden größere Schritte |
 | Player | Hoch, Menü- oder Untertitel-Taste | Untertitel wählen / ausschalten |
 | Live-TV | Hoch / Runter oder Programm + / − | Sender wechseln (nur hier empfangbare) |
-| Live-TV | OK / Info | Infoleiste: Jetzt und Danach (Programmführer) |
-| Live-TV | Menü- oder Untertitel-Taste | Untertitel wählen (standardmäßig aus) |
+| Live-TV | OK | Pause / weiter; Bedienleiste anzeigen |
+| Live-TV | Links / Rechts | Bedienleiste öffnen – dort Untertitel mit Steuerkreuz und OK wählen |
+| Live-TV | Info / Guide | Infoleiste: Jetzt und Danach (Programmführer) |
+| Live-TV | Menü- oder Untertitel-Taste | Zusätzliche Abkürzung zur Untertitelauswahl (standardmäßig aus) |
 
 **Programmführer (EPG):** `tools/build_epg.py` holt alle 3 Stunden die frei verfügbaren XMLTV-Listen von
 epgshare01.online (Deutschland + Schweiz) und legt `epg.json.gz` in den Branch `catalog`.
@@ -150,3 +152,22 @@ Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entf
 - **Fernbedienung:** Gedrückthalten wiederholt nur das Spulen; OK, Senderwechsel und Untertitel reagieren einmal pro Druck.
 - **Downloads** sind größenbegrenzt (Katalog 64 MB, Serie 16 MB, EPG 8 MB), fehlgeschlagene Hintergrund-Abrufe werden
   bis zu dreimal wiederholt, Deep-Links (`mediathektv://play?key=…`) werden auf Host und Schlüsselform geprüft.
+
+
+## Überarbeitung für TV-Fernbedienungen (24.10.2026)
+
+Die Änderungen und der Prüfstatus stehen in `TV-OPTIMIERUNG.md`.
+Debug-Builds heißen **Mediathek TV Vorschau** und verwenden das getrennte Paket
+`com.example.mediathektv.preview`. Sie können parallel zur bisherigen App installiert werden.
+Die Vorschau hat eigene App-Links und bietet keine Release-Updates für das Originalpaket an.
+Sie übernimmt den Verlauf der Original-App nicht automatisch.
+
+Build mit JDK 17, Android SDK 35 und Gradle 8.7:
+
+```sh
+./gradlew :app:assembleDebug :app:testDebugUnitTest
+```
+
+Die APK liegt anschließend unter `app/build/outputs/apk/debug/app-debug.apk`.
+Für Release-Builds gelten weiterhin die ursprünglichen Signier- und Versionsvorgaben.
+Die Änderungen werden durch dieses ZIP nicht automatisch auf GitHub veröffentlicht.

@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     # Nur bei Änderungen an der App – Katalog-Änderungen erzeugen keine neue App-Version
-    paths: ["app/**", "build.gradle.kts", "settings.gradle.kts", "gradle.properties", ".github/workflows/build.yml"]
+    paths: ["app/**", "build.gradle.kts", "settings.gradle.kts", "gradle.properties", "gradle/**", "gradlew", "gradlew.bat", ".github/workflows/build.yml"]
   workflow_dispatch:
 
 permissions:
@@ -22,6 +22,15 @@ jobs:
       - name: Install SDK components
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null 2>&1 || true; "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" "build-tools;34.0.0"
       - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+      - name: Build preview and run tests
+        run: ./gradlew :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
+      - name: Downloadable preview APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: MediathekTV-Vorschau
+          path: app/build/outputs/apk/debug/app-debug.apk
       - name: Signierschlüssel aus den Secrets
         id: key
         env:
@@ -40,7 +49,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
           RELEASE_KEYSTORE: ${{ runner.temp }}/release.p12
           RELEASE_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-        run: gradle :app:assembleRelease :app:testDebugUnitTest --no-daemon --stacktrace
+        run: ./gradlew :app:assembleRelease --no-daemon --stacktrace
       - name: Rename APK
         if: steps.key.outputs.ok == 'true'
         run: cp app/build/outputs/apk/release/app-release.apk MediathekTV.apk
