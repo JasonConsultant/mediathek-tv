@@ -498,15 +498,56 @@ def ard_search(title):
                 return src.replace("{width}", str(IMAGE_WIDTH))
     return None
 
+# ---- ZDF / 3sat: Suche über deren eigene Schnittstelle (öffentlicher Web-Token aus der Startseite)
+_tokens = {}
+
+def zdf_token(platform):
+    """Der Token, den zdf.de / 3sat.de selbst im Browser verwenden (wechselt gelegentlich, daher je Lauf neu)."""
+    if platform not in _tokens:
+        page = _get(f"https://www.{platform}.de/", 400_000).decode("utf-8", "replace")
+        m = re.search(r"apiToken\\?[\"']?\s*[:=]\s*\\?[\"']([A-Za-z0-9]{20,})", page)
+        _tokens[platform] = m.group(1) if m else ""
+    return _tokens[platform]
+
+def zdf_search(platform, title):
+    """(gefunden, bild) – nur eindeutige Titel-Treffer zählen. platform: 'zdf' oder '3sat'."""
+    want = norm(title)
+    tok = zdf_token(platform)
+    if len(want) < 4 or not tok:
+        return None, None
+    url = f"https://api.{platform}.de/search/documents?limit=8&q=" + urllib.parse.quote(title)
+    req = urllib.request.Request(url, headers={**UA, "Api-Auth": f"Bearer {tok}"})
+    with urllib.request.urlopen(req, timeout=12) as resp:
+        data = json.loads(resp.read())
+    for r in data.get("http://zdf.de/rels/search/results", []):
+        t = r.get("http://zdf.de/rels/target", {})
+        names = [norm(t.get(k) or "") for k in ("title", "teaserHeadline")]
+        if any(n == want or (len(want) >= 10 and (n.startswith(want) or want.startswith(n) and len(n) >= 10)) for n in names):
+            layouts = (t.get("teaserImageRef") or {}).get("layouts", {})
+            img = layouts.get("384x216") or layouts.get("640x360") or next(iter(layouts.values()), None)
+            return True, img
+    return False, None
+
+def phoenix_image(web):
+    """phoenix.de: Bild aus der Daten-Schnittstelle der Seite (das og:image dort ist ein leerer Platzhalter)."""
+    m = re.search(r"-a-(\d+)\.html", web)
+    if not m:
+        return None
+    data = json.loads(_get(f"https://www.phoenix.de/response/id/{m.group(1)}"))
+    img = (data.get("meta") or {}).get("bild_l")
+    return img if img and img.startswith("http") else None
+
 def find_image(web, title="", channel=""):
-    """Bild zur Sendungsseite; bei ARD-Sendern mit verschwundener Seite über die ARD-Suche."""
+    """Bild zur Sendungsseite; ist die Seite verschwunden, über die Suche des Senders."""
     error = None
     try:
-        img = find_image_on_page(web)
+        img = phoenix_image(web) if "phoenix.de" in web else find_image_on_page(web)
     except Exception as e:
         img, error = None, e
     if not img and channel in ARD_FAMILY and title:
         img = ard_search(title)
+    if not img and title and (channel == "3Sat" or channel.startswith("ZDF")):
+        img = zdf_search("3sat" if channel == "3Sat" else "zdf", title)[1]
     if not img and error:
         raise error
     return img
@@ -537,7 +578,7 @@ def find_image_on_page(web):
         img = re.sub(r"/\d+x\d+(\?.*)?$", "/480x270", img)
     return img
 
-IMAGE_CACHE_VERSION = 4   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
+IMAGE_CACHE_VERSION = 5   # erhöhen, wenn sich die Bildsuche verbessert -> alte Fehlschläge neu versuchen
 
 def load_image_cache(prev_dir):
     path = prev_dir and os.path.join(prev_dir, "images.json.gz")
@@ -671,9 +712,31 @@ def validate(cat, cache):
     with ThreadPoolExecutor(16) as pool:
         for (u, o), st in zip(checks, pool.map(lambda x: http_status(x[0]), checks)):
             cache[u] = [st, NOW]
+    # ZDF/3sat: Videodatei antwortet vom Server aus wegen Ländersperre mit 403 – dann zählt die Website:
+    # Seite weg (404) UND in der Suche des Senders kein Treffer = gelöscht.
+    def zdf_page(o):
+        w = o.get("_w") or ""
+        return (o["c"].startswith("ZDF") and "zdf.de/" in w) or (o["c"] == "3Sat" and "3sat.de/" in w)
+    zdf = [o for o in items if zdf_page(o) and (cache.get(probe_url(o)) or [0])[0] == 403]
+    zdf = [o for o in zdf if not (c := cache.get("web:" + o["_w"])) or NOW - c[1] > VALID_TTL]
+    def web_gone(o):
+        if http_status(o["_w"]) != 404:
+            return 200
+        try:
+            found, _ = zdf_search("3sat" if o["c"] == "3Sat" else "zdf", o["n"])
+        except Exception:
+            return 0
+        return 410 if found is False else 200
+    zdf = zdf[:MAX_CHECKS // 2]
+    with ThreadPoolExecutor(8) as pool:
+        for o, st in zip(zdf, pool.map(web_gone, zdf)):
+            cache["web:" + o["_w"]] = [st, NOW]
     def ok(o):
         c = cache.get(probe_url(o))
-        return c is None or not gone(o, c[0])
+        if c is not None and gone(o, c[0]):
+            return False
+        w = cache.get("web:" + (o.get("_w") or ""))
+        return not (w and w[0] == 410)
     removed = 0
     for k in ("films", "crime", "docs"):
         keep = [o for o in cat[k] if ok(o)]; removed += len(cat[k]) - len(keep); cat[k] = keep
@@ -683,7 +746,8 @@ def validate(cat, cache):
         cat[g] = [s for s in cat[g] if s["e"]]
     live = {u: v for u, v in cache.items() if NOW - v[1] <= 14 * 24 * 3600}       # Cache klein halten
     cache.clear(); cache.update(live)
-    print(f"Abrufbarkeit: {len(checks)} geprüft ({len(todo) - len(checks)} offen), {removed} gelöschte Sendungen entfernt",
+    print(f"Abrufbarkeit: {len(checks)} geprüft ({len(todo) - len(checks)} offen), ZDF/3sat-Seiten {len(zdf)} geprüft, "
+          f"{removed} gelöschte Sendungen entfernt",
           file=sys.stderr)
 
 # ---------------------------------------------------------------- Live-TV

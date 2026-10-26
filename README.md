@@ -124,6 +124,10 @@ Katalog lokal bauen: `pip install scikit-learn && python3 tools/build_catalog.py
 auf der Hauptansicht durch (Robolectric, ohne Gerät): Links ins Menü, durch alle Rubriken, OK, Hoch/Runter in
 Reihen und Senderliste. Jeder Fokus-Fehler, der auf dem Fernseher abstürzen würde, fällt hier auf.
 
+## Bilder
+Vorschaubilder aus der Sendungsseite (og:image, SRF über die SRG-Datenbank, phoenix über dessen Daten-Schnittstelle);
+ist die Seite verschwunden, über die Suche der ARD bzw. von ZDF/3sat (nur eindeutige Titel-Treffer).
+
 ## Gelöschte Sendungen
 Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entfernt hat. Dagegen zwei Stufen:
 1. **Katalogbau** (`validate` in `build_catalog.py`): HEAD auf die Videodatei; SRF über die SRG-Datenbank (URN) oder
