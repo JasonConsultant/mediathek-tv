@@ -278,8 +278,9 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                 .focusProperties {
                     exit = { dir -> if (dir == FocusDirection.Left) requesters.getValue(app.tab) else FocusRequester.Default }
                 }
-                .focusGroup()
+                // vor focusGroup(): beobachtet die Gruppe (die ganze Seite), nicht einzelne Kacheln
                 .onFocusChanged { if (it.hasFocus) { drawerState.setValue(DrawerValue.Closed); app.pageEverFocused = true } }
+                .focusGroup()
         ) { content() }
     }
 }

@@ -287,7 +287,7 @@ fun Modifier.restoreFocus(key: String, target: () -> String?, tick: Int = 0, all
 /** Kachel-Fokus auf einer Hauptseite: merkt sich zusätzlich, dass die Seite (nicht das Menü) den Fokus hat. */
 @Composable
 fun Modifier.pageFocus(app: AppState, key: String, target: () -> String?, onFocused: (String) -> Unit): Modifier =
-    restoreFocus(key, target, app.restoreTick, { !app.menuFocused }) { app.menuFocused = false; app.pageFocused = true; onFocused(it) }
+    restoreFocus(key, target, app.restoreTick, { !app.menuFocused }) { app.menuFocused = false; app.pageFocused = true; app.pageEverFocused = true; onFocused(it) }
 
 @Composable
 fun CrashDialog(report: String, onDismiss: () -> Unit) {
