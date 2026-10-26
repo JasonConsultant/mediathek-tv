@@ -180,11 +180,13 @@ class TvDeviceTest {
     }
 
     /** Kennung des Menüpunkts mit Fokus ("tab-FILME"), sonst null. */
-    private fun focusedTab(): String? = repeat3 {
-        device.findObject(By.focused(true))?.resourceName?.substringAfterLast('/')?.takeIf { it.startsWith("tab-") }
+    private fun focusedTabObject() = Tab.entries.firstNotNullOfOrNull { t ->
+        device.findObject(By.res("tab-${t.name}"))?.takeIf { it.isFocused }
     }
 
-    private fun focusedWidth(): Int = repeat3 { device.findObject(By.focused(true))?.visibleBounds?.width() } ?: 0
+    private fun focusedTab(): String? = repeat3 { focusedTabObject()?.resourceName?.substringAfterLast('/') }
+
+    private fun focusedWidth(): Int = repeat3 { focusedTabObject()?.visibleBounds?.width() } ?: 0
 
     /** Bildschirm ändert sich gerade (veralteter Knoten) – kurz warten und nochmal lesen. */
     private fun <T> repeat3(read: () -> T?): T? {
