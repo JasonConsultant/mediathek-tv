@@ -77,6 +77,10 @@ private fun App() {
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) { app.start() }
+    // Sobald der Katalog da ist: Fokus einmal auf die Seite (sonst bleibt er auf dem ersten Menüpunkt hängen,
+    // der beim Start als einziges fokussierbar war).
+    val catalogReady = app.filtered != null
+    LaunchedEffect(catalogReady) { if (catalogReady) { withFrameNanos { }; app.restoreFocus() } }
     LaunchedEffect(Unit) { while (true) { delay(30_000); app.clock = nowSec() } }
 
     // Solange die App sichtbar ist: bei Rückkehr und alle 15 Minuten nach Neuem schauen.
@@ -213,7 +217,11 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
         delay(MENU_SWITCH_DELAY)
         app.tab = t
     }
+    // Eigener Zustand: das Menü ist offen, sobald ein Menüpunkt den Fokus hat – auch wenn der Fokus beim Start
+    // dort landet (die Bibliothek übersieht diesen Fall und ließ das Menü zugeklappt, aber fokussiert).
+    val drawerState = rememberDrawerState(DrawerValue.Closed)
     ModalNavigationDrawer(
+        drawerState = drawerState,
         drawerContent = { open ->
             Column(
                 Modifier.fillMaxHeight().background(
@@ -241,6 +249,7 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                         leadingContent = { Icon(t.icon, contentDescription = null) },
                         modifier = Modifier.testTag("tab-${t.name}").focusRequester(requesters.getValue(t)).onFocusChanged {
                             if (!it.isFocused) return@onFocusChanged
+                            drawerState.setValue(DrawerValue.Open)
                             app.menuFocused = true
                             app.pageFocused = false
                             hovered = t
@@ -268,6 +277,7 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                     exit = { dir -> if (dir == FocusDirection.Left) requesters.getValue(app.tab) else FocusRequester.Default }
                 }
                 .focusGroup()
+                .onFocusChanged { if (it.hasFocus) drawerState.setValue(DrawerValue.Closed) }
         ) { content() }
     }
 }

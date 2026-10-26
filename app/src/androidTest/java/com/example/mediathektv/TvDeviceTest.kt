@@ -170,7 +170,9 @@ class TvDeviceTest {
             if (device.hasObject(By.pkg(pkg)) && !device.hasObject(By.textContains("Katalog wird geladen"))) {
                 Thread.sleep(3000)                                          // Seite aufbauen lassen
                 device.findObject(By.text("Schließen"))?.click()             // evtl. Absturzbericht eines früheren Laufs
-                step("Katalog geladen"); return
+                step("Katalog geladen")
+                check("Nach dem Start hat die Seite den Fokus, nicht das Menü (war ${focusedTab()})", focusedTab() == null)
+                return
             }
             Thread.sleep(500)
         }
@@ -185,6 +187,7 @@ class TvDeviceTest {
     private fun openMenu(expectTab: Tab? = null) {
         repeat(8) {
             if (focusedTab() != null) {
+                Thread.sleep(400)                                           // Aufklappen abwarten
                 val item = device.findObject(By.focused(true))
                 step("Menü offen auf ${focusedTab()}, Breite ${item.visibleBounds.width()} px")
                 check("Menü ist aufgeklappt (Beschriftungen sichtbar)", item.visibleBounds.width() > 300)
