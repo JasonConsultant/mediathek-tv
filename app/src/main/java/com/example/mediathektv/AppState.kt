@@ -193,6 +193,8 @@ class AppState(context: Context) {
     var restoreTick by mutableIntStateOf(0)
     var menuFocused by mutableStateOf(false)
     var pageFocused = false      // irgendeine Kachel der Seite hat den Fokus (kein Compose-Zustand nötig)
+    /** Erst wenn die Seite einmal den Fokus hatte, darf das Menü ihn bekommen – sonst landet er beim Start dort. */
+    var pageEverFocused by mutableStateOf(false)
     fun restoreFocus() { menuFocused = false; restoreTick++ }
 
     // ---------- Laden & automatisches Nachladen ----------

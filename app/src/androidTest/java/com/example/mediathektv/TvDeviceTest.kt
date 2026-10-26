@@ -180,17 +180,35 @@ class TvDeviceTest {
     }
 
     /** Kennung des Menüpunkts mit Fokus ("tab-FILME"), sonst null. */
-    private fun focusedTab(): String? =
+    private fun focusedTab(): String? = repeat3 {
         device.findObject(By.focused(true))?.resourceName?.substringAfterLast('/')?.takeIf { it.startsWith("tab-") }
+    }
+
+    private fun focusedWidth(): Int = repeat3 { device.findObject(By.focused(true))?.visibleBounds?.width() } ?: 0
+
+    /** Bildschirm ändert sich gerade (veralteter Knoten) – kurz warten und nochmal lesen. */
+    private fun <T> repeat3(read: () -> T?): T? {
+        repeat(3) { try { return read() } catch (_: androidx.test.uiautomator.StaleObjectException) { Thread.sleep(200) } }
+        return null
+    }
+
+    /** Taste drücken und warten, bis sich der Fokus im Menü wirklich bewegt hat. */
+    private fun pressInMenu(code: Int) {
+        val before = focusedTab()
+        press(code, pauseMs = 0)
+        val deadline = System.currentTimeMillis() + 2000
+        while (System.currentTimeMillis() < deadline && focusedTab() == before) Thread.sleep(100)
+        Thread.sleep(150)
+    }
 
     /** Links ins Menü: Fokus muss auf einem Menüpunkt landen, und das Menü muss aufgeklappt sein (breit). */
     private fun openMenu(expectTab: Tab? = null) {
         repeat(8) {
             if (focusedTab() != null) {
                 Thread.sleep(400)                                           // Aufklappen abwarten
-                val item = device.findObject(By.focused(true))
-                step("Menü offen auf ${focusedTab()}, Breite ${item.visibleBounds.width()} px")
-                check("Menü ist aufgeklappt (Beschriftungen sichtbar)", item.visibleBounds.width() > 300)
+                val width = focusedWidth()
+                step("Menü offen auf ${focusedTab()}, Breite $width px")
+                check("Menü ist aufgeklappt (Beschriftungen sichtbar)", width > 300)
                 expectTab?.let { check("Links landet auf der aktuellen Rubrik ${it.name}, war ${focusedTab()}", focusedTab() == "tab-${it.name}") }
                 return
             }
@@ -206,7 +224,7 @@ class TvDeviceTest {
         repeat(Tab.entries.size + 2) {
             val now = focusedTab()?.removePrefix("tab-")?.let { Tab.valueOf(it) } ?: return@repeat
             if (now == tab) return@repeat
-            press(if (now.ordinal < tab.ordinal) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP, pauseMs = 300)
+            pressInMenu(if (now.ordinal < tab.ordinal) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP)
         }
         check("Menüpunkt ${tab.name} erreicht, war ${focusedTab()}", focusedTab() == "tab-${tab.name}")
         Thread.sleep(500)

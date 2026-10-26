@@ -247,7 +247,9 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                             }
                         },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
-                        modifier = Modifier.testTag("tab-${t.name}").focusRequester(requesters.getValue(t)).onFocusChanged {
+                        modifier = Modifier.testTag("tab-${t.name}").focusRequester(requesters.getValue(t))
+                            .focusProperties { canFocus = app.pageEverFocused }
+                            .onFocusChanged {
                             if (!it.isFocused) return@onFocusChanged
                             drawerState.setValue(DrawerValue.Open)
                             app.menuFocused = true
@@ -277,7 +279,7 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                     exit = { dir -> if (dir == FocusDirection.Left) requesters.getValue(app.tab) else FocusRequester.Default }
                 }
                 .focusGroup()
-                .onFocusChanged { if (it.hasFocus) drawerState.setValue(DrawerValue.Closed) }
+                .onFocusChanged { if (it.hasFocus) { drawerState.setValue(DrawerValue.Closed); app.pageEverFocused = true } }
         ) { content() }
     }
 }
