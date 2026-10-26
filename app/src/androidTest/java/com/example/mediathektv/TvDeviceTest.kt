@@ -64,7 +64,7 @@ class TvDeviceTest {
     /** Kreuz und quer durch Menü, Rubriken und Reihen – darf nie abstürzen oder hängen bleiben. */
     @Test fun navigationWithRemote() {
         press(KeyEvent.KEYCODE_DPAD_DOWN, 3); press(KeyEvent.KEYCODE_DPAD_RIGHT, 4); press(KeyEvent.KEYCODE_DPAD_UP, 2)
-        openMenu()
+        openMenu(expectTab = Tab.START)
         // durch alle Rubriken und zurück, jede Seite wird dabei aufgebaut
         press(KeyEvent.KEYCODE_DPAD_DOWN, Tab.entries.size, pauseMs = 500)
         press(KeyEvent.KEYCODE_DPAD_UP, Tab.entries.size, pauseMs = 500)
@@ -75,7 +75,7 @@ class TvDeviceTest {
         for (tab in listOf(Tab.SERIEN, Tab.FILME, Tab.DOKUS, Tab.LIVE, Tab.START)) {
             goToTab(tab)
             press(KeyEvent.KEYCODE_DPAD_DOWN, 3); press(KeyEvent.KEYCODE_DPAD_RIGHT, 3); press(KeyEvent.KEYCODE_DPAD_UP, 1)
-            openMenu()
+            openMenu(expectTab = tab)
         }
         assertAppInFront()
     }
@@ -177,26 +177,39 @@ class TvDeviceTest {
         check("Katalog nach 2 Minuten nicht geladen", false)
     }
 
-    /** Links ins Menü, bis die Beschriftungen zu sehen sind. */
-    private fun openMenu() {
+    /** Kennung des Menüpunkts mit Fokus ("tab-FILME"), sonst null. */
+    private fun focusedTab(): String? =
+        device.findObject(By.focused(true))?.resourceName?.substringAfterLast('/')?.takeIf { it.startsWith("tab-") }
+
+    /** Links ins Menü: Fokus muss auf einem Menüpunkt landen, und das Menü muss aufgeklappt sein (breit). */
+    private fun openMenu(expectTab: Tab? = null) {
         repeat(8) {
-            if (device.hasObject(By.text("Einstellungen").pkg(pkg))) { step("Menü offen"); return }
+            if (focusedTab() != null) {
+                val item = device.findObject(By.focused(true))
+                step("Menü offen auf ${focusedTab()}, Breite ${item.visibleBounds.width()} px")
+                check("Menü ist aufgeklappt (Beschriftungen sichtbar)", item.visibleBounds.width() > 300)
+                expectTab?.let { check("Links landet auf der aktuellen Rubrik ${it.name}, war ${focusedTab()}", focusedTab() == "tab-${it.name}") }
+                return
+            }
             press(KeyEvent.KEYCODE_DPAD_LEFT)
         }
-        check("Menü öffnet sich mit Links", device.hasObject(By.text("Einstellungen").pkg(pkg)))
+        check("Menü öffnet sich mit Links", focusedTab() != null)
     }
 
     /** Über das Menü in eine Rubrik und mit OK auf die Seite. */
     private fun goToTab(tab: Tab) {
         if (device.hasObject(By.res(pkg, "exo_content_frame"))) press(KeyEvent.KEYCODE_BACK)
         openMenu()
-        press(KeyEvent.KEYCODE_DPAD_UP, Tab.entries.size, pauseMs = 120)   // ganz nach oben (Start)
-        Thread.sleep(400)
-        press(KeyEvent.KEYCODE_DPAD_DOWN, tab.ordinal, pauseMs = 300)
-        Thread.sleep(600)
+        repeat(Tab.entries.size + 2) {
+            val now = focusedTab()?.removePrefix("tab-")?.let { Tab.valueOf(it) } ?: return@repeat
+            if (now == tab) return@repeat
+            press(if (now.ordinal < tab.ordinal) KeyEvent.KEYCODE_DPAD_DOWN else KeyEvent.KEYCODE_DPAD_UP, pauseMs = 300)
+        }
+        check("Menüpunkt ${tab.name} erreicht, war ${focusedTab()}", focusedTab() == "tab-${tab.name}")
+        Thread.sleep(500)
         press(KeyEvent.KEYCODE_ENTER)                                       // Seite öffnen, Fokus auf die Seite
         Thread.sleep(1200)
-        check("Menü schließt sich nach OK (${tab.label})", !device.hasObject(By.text("Einstellungen").pkg(pkg)))
+        check("Nach OK hat die Seite den Fokus (${tab.label}), war ${focusedTab()}", focusedTab() == null)
     }
 
     /** Wartet, bis der Player läuft oder einen Fehler meldet. */

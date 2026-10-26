@@ -18,6 +18,9 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
@@ -158,7 +161,8 @@ private fun App() {
         app.restoreFocus()
     }
 
-    Box(Modifier.fillMaxSize().background(TvColors.Background)) {
+    // testTagsAsResourceId: der Geräte-Test findet Menüpunkte und Fokus über ihre Kennung
+    Box(Modifier.fillMaxSize().background(TvColors.Background).semantics { testTagsAsResourceId = true }) {
         when (val screen = stack.last()) {
             Screen.Main -> SideMenu(app) {
                 MainContent(app, nav,
@@ -235,7 +239,7 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                             }
                         },
                         leadingContent = { Icon(t.icon, contentDescription = null) },
-                        modifier = Modifier.focusRequester(requesters.getValue(t)).onFocusChanged {
+                        modifier = Modifier.testTag("tab-${t.name}").focusRequester(requesters.getValue(t)).onFocusChanged {
                             if (!it.isFocused) return@onFocusChanged
                             app.menuFocused = true
                             app.pageFocused = false
@@ -256,7 +260,15 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
         },
         scrimBrush = Brush.horizontalGradient(listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent)),
     ) {
-        Box(Modifier.fillMaxSize().padding(start = RAIL_WIDTH)) { content() }
+        // "Links" am linken Rand der Seite führt immer auf die aktuelle Rubrik im Menü –
+        // nicht auf den Menüpunkt, der zufällig auf gleicher Höhe liegt.
+        Box(
+            Modifier.fillMaxSize().padding(start = RAIL_WIDTH)
+                .focusProperties {
+                    exit = { dir -> if (dir == FocusDirection.Left) requesters.getValue(app.tab) else FocusRequester.Default }
+                }
+                .focusGroup()
+        ) { content() }
     }
 }
 
