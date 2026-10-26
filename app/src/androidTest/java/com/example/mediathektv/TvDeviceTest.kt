@@ -8,8 +8,6 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.Until
 import org.junit.After
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Rule
@@ -32,13 +30,25 @@ class TvDeviceTest {
     private val steps = ArrayList<String>()
     private var scenario: ActivityScenario<MainActivity>? = null
 
-    /** Bei einem Fehler: Bildschirmfoto und die letzten Schritte, damit man sieht, wo es hing. */
-    @get:Rule val watcher = object : TestWatcher() {
-        override fun failed(e: Throwable, description: Description) {
-            runCatching { device.executeShellCommand("screencap -p /data/local/tmp/fehler-${description.methodName}.png") }
-            println("Schritte bis zum Fehler (${description.methodName}):\n" + steps.takeLast(40).joinToString("\n"))
+    private var testName = "test"
+
+    /** Bei einem Fehler: Bildschirmfoto, Bildschirminhalt und die letzten Schritte – noch vor dem Schließen der App. */
+    private fun diagnose(reason: String) {
+        runCatching { device.executeShellCommand("screencap -p /data/local/tmp/fehler-$testName.png") }
+        runCatching {
+            val out = java.io.ByteArrayOutputStream(); device.dumpWindowHierarchy(out)
+            val texts = Regex("text=\"([^\"]+)\"").findAll(out.toString()).map { it.groupValues[1] }.toList()
+            val focused = Regex("<node[^>]*focused=\"true\"[^>]*>").findAll(out.toString()).map { it.value.take(300) }.toList()
+            println("DIAGNOSE $testName: $reason\nSichtbare Texte: $texts\nFokus: $focused")
         }
+        println("Schritte ($testName):\n" + steps.takeLast(40).joinToString("\n"))
     }
+
+    @get:Rule val watcher = object : TestWatcher() {
+        override fun starting(description: Description) { testName = description.methodName }
+    }
+
+    private fun check(message: String, condition: Boolean) { if (!condition) { diagnose(message); fail(message) } }
 
     @Before fun start() {
         Playback.state = "idle"
@@ -76,7 +86,7 @@ class TvDeviceTest {
         var played = false
         for (attempt in 1..5) {
             press(KeyEvent.KEYCODE_ENTER)                                   // Details öffnen
-            assertTrue("Details öffnen sich (Versuch $attempt)",
+            check("Details öffnen sich (Versuch $attempt)",
                 device.wait(Until.hasObject(By.textContains("Abspielen").pkg(pkg)), 15_000) ||
                 device.hasObject(By.textContains("Fortsetzen")) || device.hasObject(By.textContains("Trotzdem versuchen")))
             Thread.sleep(1500)                                              // Verfügbarkeitsprüfung
@@ -93,21 +103,22 @@ class TvDeviceTest {
             device.wait(Until.gone(By.res(pkg, "exo_content_frame")), 5_000)
             press(KeyEvent.KEYCODE_BACK); press(KeyEvent.KEYCODE_DPAD_RIGHT)
         }
-        assertTrue("Mindestens ein Film läuft im Player", played)
+        check("Mindestens ein Film läuft im Player", played)
 
         Thread.sleep(3000)
         press(KeyEvent.KEYCODE_DPAD_RIGHT)                                  // 10 s vor
         press(KeyEvent.KEYCODE_DPAD_CENTER); Thread.sleep(1000)             // Pause
-        assertEquals("OK pausiert", "paused", Playback.state)
+        check("OK pausiert: erwartet " + "paused" + ", war " + (Playback.state), "paused" == (Playback.state))
         press(KeyEvent.KEYCODE_DPAD_CENTER)                                 // weiter
-        assertEquals("OK setzt fort", "playing", waitForPlayback(20_000))
+        val resumed = waitForPlayback(20_000)
+        check("OK setzt fort: war $resumed", resumed == "playing")
         press(KeyEvent.KEYCODE_BACK)                                        // Bedienleiste zu
         press(KeyEvent.KEYCODE_DPAD_UP)                                     // Untertitel-Auswahl (oder Hinweis)
         Thread.sleep(800)
         press(KeyEvent.KEYCODE_BACK)
         press(KeyEvent.KEYCODE_DPAD_RIGHT, 6, pauseMs = 60)                 // Spulen gedrückt halten
         press(KeyEvent.KEYCODE_BACK); press(KeyEvent.KEYCODE_BACK)          // Leiste zu, Player verlassen
-        assertTrue("Zurück aus dem Player in die Details",
+        check("Zurück aus dem Player in die Details",
             device.wait(Until.hasObject(By.textContains("Fortsetzen").pkg(pkg)), 10_000) ||
             device.hasObject(By.textContains("Abspielen")))
         press(KeyEvent.KEYCODE_BACK)
@@ -127,14 +138,15 @@ class TvDeviceTest {
             result = waitForPlayback(30_000)
             step("Sender ${zaps + 1}: $result")
         }
-        assertEquals("Ein Livesender läuft", "playing", result)
+        check("Ein Livesender läuft: erwartet " + "playing" + ", war " + (result), "playing" == (result))
         // Zappen: hoch, runter, Programm +/−, OK (Pause), Info
         press(KeyEvent.KEYCODE_DPAD_DOWN); Thread.sleep(2000)
         press(KeyEvent.KEYCODE_DPAD_UP); Thread.sleep(2000)
         press(KeyEvent.KEYCODE_CHANNEL_UP); Thread.sleep(1500)
         Playback.state = "idle"
         press(KeyEvent.KEYCODE_CHANNEL_DOWN)
-        assertEquals("Nach dem Zappen läuft wieder ein Sender", "playing", waitForPlayback(45_000))
+        val afterZap = waitForPlayback(45_000)
+        check("Nach dem Zappen läuft wieder ein Sender: war $afterZap", afterZap == "playing")
         press(KeyEvent.KEYCODE_INFO); Thread.sleep(800)
         press(KeyEvent.KEYCODE_DPAD_LEFT); Thread.sleep(800)               // Bedienleiste
         press(KeyEvent.KEYCODE_BACK); press(KeyEvent.KEYCODE_BACK); press(KeyEvent.KEYCODE_BACK)
@@ -154,7 +166,7 @@ class TvDeviceTest {
     private fun waitForCatalog() {
         val deadline = System.currentTimeMillis() + 120_000
         while (System.currentTimeMillis() < deadline) {
-            if (device.hasObject(By.textContains("konnte nicht geladen werden"))) fail("Katalog konnte nicht geladen werden")
+            if (device.hasObject(By.textContains("konnte nicht geladen werden"))) check("Katalog konnte nicht geladen werden", false)
             if (device.hasObject(By.pkg(pkg)) && !device.hasObject(By.textContains("Katalog wird geladen"))) {
                 Thread.sleep(3000)                                          // Seite aufbauen lassen
                 device.findObject(By.text("Schließen"))?.click()             // evtl. Absturzbericht eines früheren Laufs
@@ -162,7 +174,7 @@ class TvDeviceTest {
             }
             Thread.sleep(500)
         }
-        fail("Katalog nach 2 Minuten nicht geladen")
+        check("Katalog nach 2 Minuten nicht geladen", false)
     }
 
     /** Links ins Menü, bis die Beschriftungen zu sehen sind. */
@@ -171,7 +183,7 @@ class TvDeviceTest {
             if (device.hasObject(By.text("Einstellungen").pkg(pkg))) { step("Menü offen"); return }
             press(KeyEvent.KEYCODE_DPAD_LEFT)
         }
-        assertTrue("Menü öffnet sich mit Links", device.hasObject(By.text("Einstellungen").pkg(pkg)))
+        check("Menü öffnet sich mit Links", device.hasObject(By.text("Einstellungen").pkg(pkg)))
     }
 
     /** Über das Menü in eine Rubrik und mit OK auf die Seite. */
@@ -184,7 +196,7 @@ class TvDeviceTest {
         Thread.sleep(600)
         press(KeyEvent.KEYCODE_ENTER)                                       // Seite öffnen, Fokus auf die Seite
         Thread.sleep(1200)
-        assertTrue("Menü schließt sich nach OK (${tab.label})", !device.hasObject(By.text("Einstellungen").pkg(pkg)))
+        check("Menü schließt sich nach OK (${tab.label})", !device.hasObject(By.text("Einstellungen").pkg(pkg)))
     }
 
     /** Wartet, bis der Player läuft oder einen Fehler meldet. */
@@ -199,5 +211,5 @@ class TvDeviceTest {
     }
 
     private fun assertAppInFront() =
-        assertEquals("App ist noch im Vordergrund (kein Absturz)", pkg, device.currentPackageName)
+        check("App ist noch im Vordergrund (kein Absturz): erwartet " + pkg + ", war " + (device.currentPackageName), pkg == (device.currentPackageName))
 }
