@@ -116,7 +116,9 @@ class TvDeviceTest {
         press(KeyEvent.KEYCODE_BACK)                                        // Bedienleiste zu
         press(KeyEvent.KEYCODE_DPAD_UP)                                     // Untertitel-Auswahl (oder Hinweis)
         Thread.sleep(800)
-        press(KeyEvent.KEYCODE_BACK)
+        if (device.hasObject(By.text("Aus"))) { step("Untertitel-Auswahl offen"); press(KeyEvent.KEYCODE_BACK) }
+        else step("keine Untertitel – nur Hinweis")
+        check("Nach der Untertitel-Taste noch im Player", Playback.state == "playing" || Playback.state == "paused")
         press(KeyEvent.KEYCODE_DPAD_RIGHT, 6, pauseMs = 60)                 // Spulen gedrückt halten
         press(KeyEvent.KEYCODE_BACK); press(KeyEvent.KEYCODE_BACK)          // Leiste zu, Player verlassen
         check("Zurück aus dem Player in die Details",
