@@ -17,6 +17,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.rememberScrollState
@@ -212,7 +214,10 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
             Column(
                 Modifier.fillMaxHeight().background(
                     Brush.horizontalGradient(listOf(TvColors.Surface, TvColors.Surface.copy(alpha = if (open == DrawerValue.Open) 0.97f else 0.0f)))
-                ).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp),
+                ).verticalScroll(rememberScrollState()).padding(horizontal = 10.dp, vertical = 8.dp)
+                    // Links aus der Seite: Fokus landet auf der aktuellen Rubrik (nicht auf dem Punkt auf gleicher Höhe)
+                    .focusProperties { enter = { requesters.getValue(app.tab) } }
+                    .focusGroup(),
                 verticalArrangement = Arrangement.Center,
             ) {
                 Tab.entries.forEach { t ->
@@ -232,13 +237,9 @@ internal fun SideMenu(app: AppState, content: @Composable () -> Unit) {
                         leadingContent = { Icon(t.icon, contentDescription = null) },
                         modifier = Modifier.focusRequester(requesters.getValue(t)).onFocusChanged {
                             if (!it.isFocused) return@onFocusChanged
-                            val entering = !app.menuFocused          // von der Seite her ins Menü gekommen
                             app.menuFocused = true
                             app.pageFocused = false
-                            if (entering && t != app.tab) {
-                                // "Links" landet auf dem Punkt auf gleicher Höhe – wir wollen die aktuelle Rubrik
-                                scope.launch { withFrameNanos { }; runCatching { requesters.getValue(app.tab).requestFocus() } }
-                            } else hovered = t
+                            hovered = t
                         },
                         colors = NavigationDrawerItemDefaults.colors(
                             contentColor = TvColors.TextMuted,
