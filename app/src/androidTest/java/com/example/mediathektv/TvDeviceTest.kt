@@ -72,7 +72,8 @@ class TvDeviceTest {
         press(KeyEvent.KEYCODE_DPAD_DOWN, 8, pauseMs = 60)
         press(KeyEvent.KEYCODE_DPAD_UP, 8, pauseMs = 60)
         // in jede Hauptrubrik hinein, dort blättern, zurück ins Menü
-        for (tab in listOf(Tab.SERIEN, Tab.FILME, Tab.DOKUS, Tab.LIVE, Tab.START)) {
+        // (Serien fehlen auf dem Emulator: er steht in den USA, Serien sind nur für DE/AT/CH freigegeben)
+        for (tab in listOf(Tab.FILME, Tab.KRIMIS, Tab.DOKUS, Tab.LIVE, Tab.START)) {
             goToTab(tab)
             press(KeyEvent.KEYCODE_DPAD_DOWN, 3); press(KeyEvent.KEYCODE_DPAD_RIGHT, 3); press(KeyEvent.KEYCODE_DPAD_UP, 1)
             openMenu(expectTab = tab)
@@ -106,8 +107,8 @@ class TvDeviceTest {
         check("Mindestens ein Film läuft im Player", played)
 
         Thread.sleep(3000)
-        press(KeyEvent.KEYCODE_DPAD_RIGHT)                                  // 10 s vor
-        press(KeyEvent.KEYCODE_DPAD_CENTER); Thread.sleep(1000)             // Pause
+        press(KeyEvent.KEYCODE_DPAD_RIGHT); Thread.sleep(800)               // 10 s vor (Leiste erscheint)
+        press(KeyEvent.KEYCODE_DPAD_CENTER); Thread.sleep(1200)             // Pause
         check("OK pausiert: erwartet " + "paused" + ", war " + (Playback.state), "paused" == (Playback.state))
         press(KeyEvent.KEYCODE_DPAD_CENTER)                                 // weiter
         val resumed = waitForPlayback(20_000)

@@ -471,10 +471,12 @@ class PlayerActivity : ComponentActivity() {
         handler.removeCallbacks(hideBanner)
         banner.visibility = View.GONE
         view.showController()
-        // A concrete child gives D-pad navigation a predictable entry point.
+        // Fokus immer auf Pause/Weiter – erst nachdem die Leiste wirklich da ist (sonst landet er z.B. auf "+10 s",
+        // und OK spult statt zu pausieren; im Geräte-Test so beobachtet).
         val playPause = view.findViewById<View>(androidx.media3.ui.R.id.exo_play_pause)
-        if (playPause?.isShown == true && playPause.isEnabled) playPause.requestFocus()
-        else view.requestFocus()
+        val focusPlay = { if (playPause?.isShown == true && playPause.isEnabled) playPause.requestFocus() else view.requestFocus() }
+        focusPlay()
+        view.post { focusPlay() }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
