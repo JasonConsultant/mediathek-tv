@@ -50,6 +50,9 @@ object Playback {
     var liveSubtitles = false                      // Untertitel im Live-TV nur auf Wunsch
     var channels: List<LiveChannel> = emptyList()   // Senderliste zum Umschalten (Reihenfolge wie in der App)
     var playable: Set<String> = emptySet()          // Sender, die hier empfangbar sind
+
+    /** Zustand des Players – für den Geräte-Test (läuft wirklich etwas?). */
+    @Volatile var state: String = "idle"
 }
 
 /**
@@ -163,7 +166,14 @@ class PlayerActivity : ComponentActivity() {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) onEnded()
             }
-            override fun onPlayerError(error: PlaybackException) = onError(error)
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) Playback.state = "playing"
+                else if (Playback.state == "playing") Playback.state = "paused"
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                Playback.state = "error:${error.errorCodeName}"
+                onError(error)
+            }
         })
 
         val liveChannel = Playback.live
@@ -178,6 +188,7 @@ class PlayerActivity : ComponentActivity() {
     // ---------------------------------------------------------------- Sendungen
 
     private fun startVideo(v: Video, fromStart: Boolean) {
+        Playback.state = "loading"
         streamGeneration++
         streamJob?.cancel()
         video = v
@@ -255,6 +266,7 @@ class PlayerActivity : ComponentActivity() {
     // ---------------------------------------------------------------- Live-TV
 
     private fun startLive(ch: LiveChannel, autoPlay: Boolean = true) {
+        Playback.state = "loading"
         streamGeneration++
         val generation = streamGeneration
         streamJob?.cancel()
@@ -546,6 +558,7 @@ class PlayerActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        if (isFinishing) Playback.state = "closed"
         streamJob?.cancel()
         subtitleDialog?.setOnDismissListener(null)
         subtitleDialog?.dismiss()

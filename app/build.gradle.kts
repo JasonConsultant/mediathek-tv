@@ -13,6 +13,7 @@ android {
     compileSdk = 35
 
     defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         applicationId = "com.example.mediathektv"
         minSdk = 24
         targetSdk = 35
@@ -81,6 +82,11 @@ dependencies {
     implementation("androidx.media3:media3-session:1.4.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Geräte-Test auf dem Android-TV-Emulator (GitHub): echte Fernbedienungstasten, echte Wiedergabe
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test:rules:1.6.1")
+    androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
     testImplementation("org.json:json:20240303")   // echtes org.json für JVM-Tests
     testImplementation("org.robolectric:robolectric:4.13")        // Oberfläche auf dem JVM durchklicken
     testImplementation("androidx.compose.ui:ui-test-junit4")

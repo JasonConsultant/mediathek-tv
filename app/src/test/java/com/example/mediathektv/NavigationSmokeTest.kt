@@ -5,6 +5,7 @@ import android.view.KeyEvent.*
 import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.NativeKeyEvent
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performKeyPress
 import androidx.test.core.app.ApplicationProvider
@@ -91,6 +92,8 @@ class NavigationSmokeTest {
         // Links ins Menü, dort durch alle Rubriken (jede baut ihre Seite auf)
         repeat(6) { press(KEYCODE_DPAD_LEFT) }
         assertTrue("Menü hat den Fokus", app.menuFocused)
+        assertTrue("Beschriftungen sichtbar, wenn das Menü offen ist (Geräte-Test erkennt das Menü daran)",
+            rule.onAllNodesWithText("Einstellungen").fetchSemanticsNodes().isNotEmpty())
         assertEquals("Links landet auf der aktuellen Rubrik, nicht auf dem Punkt auf gleicher Höhe", Tab.START, app.tab)
         press(KEYCODE_DPAD_DOWN)
         assertNotEquals("Runter im Menü wechselt die Rubrik", Tab.START, app.tab)
@@ -108,6 +111,8 @@ class NavigationSmokeTest {
         assertEquals(Tab.LIVE, app.tab)
         press(KEYCODE_DPAD_CENTER)
         assertTrue("OK im Menü: Fokus auf der Seite", app.pageFocused && !app.menuFocused)
+        assertTrue("Beschriftungen weg, wenn das Menü zu ist",
+            rule.onAllNodesWithText("Einstellungen").fetchSemanticsNodes().isEmpty())
         assertEquals("ch|Das Erste", app.pages.getValue(Tab.LIVE).focusKey)
         repeat(3) { press(KEYCODE_DPAD_DOWN) }
         assertEquals("ch|ZDF", app.pages.getValue(Tab.LIVE).focusKey)   // SRF 1 gehört nicht zum deutschen Angebot
