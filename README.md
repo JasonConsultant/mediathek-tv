@@ -162,7 +162,7 @@ Die MediathekView-Filmliste enthält auch Sendungen, die der Sender längst entf
 Tastenrouting, Spulen, Live-TV-Belegung, Zurück-Verhalten und Home/Standby sind in `TV-OPTIMIERUNG.md` beschrieben
 (`RemoteInput.kt`, getestet in `RemoteInputTest`).
 
-Bauen mit JDK 17, Android SDK 35 und dem beiliegenden Gradle-Wrapper (8.7):
+Bauen mit JDK 17, Android SDK 37 und dem beiliegenden Gradle-Wrapper (9.8.2):
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleRelease

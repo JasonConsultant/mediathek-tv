@@ -17,7 +17,7 @@ Stand: 24.10.2026 (Version 2.27).
 | Senderwechsel | Alte SRG-Aufträge werden abgebrochen; eine Generationsnummer verhindert, dass verspätete Antworten den aktuellen Sender überschreiben. |
 | Home / Standby | Wiedergabe und Timer pausieren im Hintergrund. Bei Rückkehr bleibt die Wiedergabe pausiert; Live-Adressen werden erneut aufgelöst. Ein unterbrochener Folgen-Countdown wartet auf Bestätigung mit OK. |
 | Hintergrundkatalog | Nach ausgeschöpften Wiederholungen wird ein Abruffehler als Fehler gemeldet, nicht als Erfolg. |
-| Build-Workflow | Gradle-Wrapper 8.7 (mit Prüfsumme). Tests laufen vor jedem Release; veröffentlicht wird nur mit vorhandenen Secrets. |
+| Build-Workflow | Gradle-Wrapper 9.8.2 (mit Prüfsumme). Tests laufen vor jedem Release; veröffentlicht wird nur mit vorhandenen Secrets. |
 
 Der Quellcode enthielt bereits HTTPS-Regeln, Backup-Ausschlüsse, Update-Prüfungen und einen anfänglichen Player-Fokus. Diese sind nicht als neue Leistungen dieser Überarbeitung zu verstehen.
 
@@ -32,20 +32,20 @@ Der Quellcode enthielt bereits HTTPS-Regeln, Backup-Ausschlüsse, Update-Prüfun
 
 ## Build
 
-Mit JDK 17, Android SDK 35 und dem beiliegenden Gradle-Wrapper:
+Mit JDK 17, Android SDK 37 und dem beiliegenden Gradle-Wrapper:
 
 ```sh
 ./gradlew :app:testDebugUnitTest :app:assembleRelease
 ```
 
-Unter Windows: `gradlew.bat …`. Der Wrapper lädt Gradle 8.7 und prüft dessen SHA-256-Prüfsumme.
+Unter Windows: `gradlew.bat …`. Der Wrapper lädt Gradle 9.8.2 und prüft dessen SHA-256-Prüfsumme.
 Ein Release, das sich über die installierte App legen lässt, braucht den ursprünglichen Signierschlüssel
 (nur in den GitHub-Secrets) und einen höheren `BUILD_NUMBER`.
 
 ## Prüfung
 
 - Neun gezielte `RemoteInputTest`-Regressionstests wurden separat gegen das Android-SDK kompiliert und auf der JVM erfolgreich ausgeführt.
-- Vollständiger Gradle-Build `:app:assembleDebug :app:testDebugUnitTest`: erfolgreich mit JDK 17.0.21 und Gradle 8.7.
+- Vollständiger Gradle-Build `:app:assembleDebug :app:testDebugUnitTest`: erfolgreich mit JDK 17.0.21 und Gradle 8.7 (Stand 24.10.).
 - Alle 23 Tests bestanden, keine Fehler und keine übersprungenen Tests. Darin enthalten: neun Fernbedienungs-Regressionstests und der vorhandene Robolectric-Oberflächentest mit D-Pad-Navigation. Die separate Ausführung der neun Tests wird nicht zusätzlich zur Gesamtzahl gezählt.
 - ZIP-Integrität der APK und `zipalign -c -P 16 4` erfolgreich geprüft. Diese Prüfungen ersetzen keinen Laufzeittest auf einem 16-KB-Gerät.
 - Keine Prüfung auf einem echten Fernseher und keine Garantie für alle Hersteller, Fernbedienungen oder Medienformate.
