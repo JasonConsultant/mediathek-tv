@@ -115,6 +115,9 @@ class PlayerActivity : ComponentActivity() {
             player = this@PlayerActivity.player
             keepScreenOn = true
             controllerShowTimeoutMs = 3500
+            // Beim Start keine Bedienleiste: sonst bewegen Links/Rechts den Fokus in der Leiste, statt zu spulen
+            // (im Geräte-Test gesehen). Die Leiste kommt mit OK, beim Spulen und bei Pause.
+            controllerAutoShow = false
         }
         overlay = TextView(this).apply {
             setTextColor(Color.WHITE)
